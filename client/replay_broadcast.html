@@ -3954,9 +3954,9 @@ body[data-embed] #board { top: 0; height: 100%; }
      bottom: var(--band, 0px) and is still dismissed by every seek; and every
      scrubber beat this block draws is a LABELLED, CLICKABLE BUTTON that seeks
      on click, styled for EVERY kind the sim emits — gamestart, hillflip.red,
-     hillflip.blue, tagout.red, tagout.blue and gameover. The builder is named
-     pbBeat rather than markBeat precisely so it can never be shadowed by the
-     chrome alias block's hoisted `var markBeat = C.markBeat` (cogame-tandem,
+     hillflip.blue, tagout.red, tagout.blue and gameover. The builder carries a
+     pb- prefix precisely so it can never be shadowed by the chrome alias
+     block's own hoisted declaration of the shared one (cogame-tandem,
      2026-08-23).
      ============================================================ -->
 <style>

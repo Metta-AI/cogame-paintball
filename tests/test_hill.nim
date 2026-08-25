@@ -1,6 +1,7 @@
 ## King of the Hill: the tile set, the 80% threshold, the banked clock and the
 ## three end rules.
-import std/[math, unittest]
+import std/[json, math, unittest]
+import paintball/broadcast
 import helpers
 
 proc fillHill(sim: var SimServer, team: Team, count: int) =
@@ -129,3 +130,40 @@ suite "king of the hill":
     check box[2] - box[0] + 1 == 5 * size
     check box[3] - box[1] + 1 == 5 * size
     echo "hill box ", box, " for ", sim.hillTiles.len, " tiles of ", size, " px"
+
+  test "the broadcast hillflip is throttled like the sim's own":
+    ## Design §Mechanic 2: the flip event is "throttled to at most one per 12
+    ## ticks so a contested rim cannot flood the feed". The SIM event was
+    ## throttled; the derived broadcast event was not, and every one of those
+    ## becomes a clickable scrubber beat — a rim oscillating on the 80%
+    ## boundary would have produced one per tick.
+    var sim = newPaintballSim()
+    var tracker = initBroadcastTracker()
+    var events = newJArray()
+    sim.stepEvents(tracker, events)          ## first call only snapshots
+    proc flips(sim: var SimServer, tracker: var BroadcastTracker): int =
+      var node = newJArray()
+      sim.stepEvents(tracker, node)
+      for event in node:
+        if event["k"].getStr() == "hillflip":
+          inc result
+    ## Paint the hill red, then hand it back and forth every tick.
+    for tile in sim.hillTiles:
+      discard sim.paintTile(tile, Red)
+    sim.updateHill()
+    check flips(sim, tracker) == 1           ## the first change IS announced
+    var announced = 0
+    for i in 0 ..< HillFlipThrottleTicks - 1:
+      inc sim.tickCount
+      for tile in sim.hillTiles:
+        discard sim.paintTile(tile, if i mod 2 == 0: Blue else: Red)
+      sim.updateHill()
+      announced += flips(sim, tracker)
+    check announced == 0                     ## nothing inside the window
+    ## And the change is not LOST: the first tick past the window announces
+    ## whatever the owner is by then.
+    inc sim.tickCount
+    for tile in sim.hillTiles:
+      discard sim.paintTile(tile, Blue)
+    sim.updateHill()
+    check flips(sim, tracker) == 1

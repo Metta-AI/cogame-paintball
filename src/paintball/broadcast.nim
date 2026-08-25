@@ -39,6 +39,8 @@ type
     hillOwner: Team
     hillTicks: array[Team, int]
     paintCount: array[Team, int]
+    hillFlipEmitted: int        ## last ANNOUNCED owner (0 = none, ord+1).
+    hillFlipTick: int           ## tick it was announced on; see the throttle.
     hp: seq[int]                ## per cog, for the `tag` and `heal` deltas.
     arcTicks: seq[int]          ## per cog, for the `spray` (burst) delta.
     gameIndex: int
@@ -87,10 +89,21 @@ proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
   tracker.prevPhase = sim.phase
   tracker.initialized = true
 
+proc resetFlipWindow(tracker: var BroadcastTracker, sim: SimServer) =
+  ## The hillflip throttle's own state, which must NOT be refreshed on every
+  ## step (snapshot runs per tick; this window spans HillFlipThrottleTicks of
+  ## them). Set on the first frame and after a seek: the current owner counts
+  ## as already announced — nothing changed on screen — and the next real
+  ## change may fire immediately rather than waiting out a window it never saw.
+  tracker.hillFlipEmitted =
+    if sim.hillOwned: ord(sim.hillOwner) + 1 else: 0
+  tracker.hillFlipTick = -HillFlipThrottleTicks - 1
+
 proc resync*(tracker: var BroadcastTracker, sim: SimServer) =
   ## Snapshots without emitting events, after a seek/loop/skip. The next
   ## `stepEvents` then diffs against this frame, so no phantom beats fire.
   tracker.snapshot(sim)
+  tracker.resetFlipWindow(sim)
 
 proc killerThisStep(
   sim: SimServer,
@@ -125,6 +138,7 @@ proc stepEvents*(
   ## place scrubber markers and honour per-beat read-holds.
   if not tracker.initialized:
     tracker.snapshot(sim)
+    tracker.resetFlipWindow(sim)
     return
 
   let tick = sim.tickCount
@@ -160,8 +174,17 @@ proc stepEvents*(
   # paint each team laid since the previous step. Derived from state deltas,
   # so they cost no replay bytes and read identically live and in replay.
   if sim.config.hill:
-    if sim.hillOwned != tracker.hillOwned or
-        (sim.hillOwned and sim.hillOwner != tracker.hillOwner):
+    ## THROTTLED, exactly like the sim's own HillFlip analysis event: at most
+    ## one announcement per HillFlipThrottleTicks, so a rim oscillating on the
+    ## 80% boundary cannot flood the feed or the scrubber (every one of these
+    ## becomes a beat button). Compared against the last ANNOUNCED owner, not
+    ## against last tick's, so a change that lands inside the window is still
+    ## announced on the first tick the window allows instead of being lost.
+    let ownerCode = if sim.hillOwned: ord(sim.hillOwner) + 1 else: 0
+    if ownerCode != tracker.hillFlipEmitted and
+        tick - tracker.hillFlipTick >= HillFlipThrottleTicks:
+      tracker.hillFlipEmitted = ownerCode
+      tracker.hillFlipTick = tick
       if sim.hillOwned:
         events.add(%*{
           "t": tick,

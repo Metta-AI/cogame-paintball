@@ -1943,7 +1943,30 @@ proc runServerLoop*(
       for _ in 0 ..< playbackSpeed(liveSpeedIndex):
         let phaseBeforeStep = sim.phase
         stepPrevInputs.clearPressedInputMasks(stepPressedInputMasks)
-        sim.step(stepInputs, stepPrevInputs)
+        # The `fault` end conditions (design §End conditions rows 5 and 6).
+        # A tripped sim invariant or any other exception out of the tick is
+        # NOT a silent non-zero exit: the episode ends here, both seats score
+        # 0.500 (roster.playerResultsJson's fault branch), and the artifact
+        # block below still writes the partial replay, the results and the
+        # events — best effort, then the process exits normally so the runner
+        # reads a scored episode instead of an empty workdir.
+        var faultRule = ""
+        try:
+          sim.step(stepInputs, stepPrevInputs)
+        except SimGuardError as guard:
+          echo "paintball: SIM GUARD tripped at tick ", sim.tickCount, ": ",
+            guard.msg
+          faultRule = EndRuleSimFault
+        except CatchableError as error:
+          echo "paintball: HOST ERROR at tick ", sim.tickCount, ": ",
+            error.msg
+          faultRule = EndRuleHostError
+        if faultRule.len > 0:
+          sim.endReason = ReasonFault
+          sim.endRule = faultRule
+          sim.phase = GameOver
+          quitAfterFrame = true
+          break
         if sim.collectEvents:
           # Drained every tick, like the extractor's walk: the sink is a plain
           # seq on the sim and would otherwise grow for the whole match.

@@ -766,6 +766,13 @@ type
 
   PaintballError* = object of ValueError
 
+  SimGuardError* = object of CatchableError
+    ## A sim INVARIANT tripped: a paint index out of range, a cog outside the
+    ## map, hill counts that cannot be true. The design note's end-condition
+    ## table row 5 says what happens next — the episode ends `fault` /
+    ## `sim_fault`, both seats score 0.500, and the partial replay is written
+    ## — and the server's tick loop is the only place that catches it.
+
   GamePhase* = enum
     Lobby
     Playing

@@ -205,6 +205,34 @@ proc paintSpeedPct*(sim: SimServer, playerIndex: int): int {.inline.} =
   of puEnemy: sim.config.paintSpeedEnemyPct
   of puNone: 100
 
+proc checkPaintInvariants*(sim: SimServer) =
+  ## The sim guard the design note's `fault` / `sim_fault` row exists for,
+  ## evaluated once per tick under the paint gates. Integer-only, O(cogs +
+  ## teams): the tile counts are maintained INCREMENTALLY on every flip, so a
+  ## count outside its own bounds means the increments and the grid no longer
+  ## agree — and every number the episode is scored on is downstream of them.
+  ## Better a named fault with 0.500/0.500 and a partial replay than a scored
+  ## episode built on a broken counter.
+  if sim.paintOwner.len != sim.paintGridW * sim.paintGridH:
+    raise newException(SimGuardError,
+      "paint grid is " & $sim.paintOwner.len & " tiles, expected " &
+      $(sim.paintGridW * sim.paintGridH))
+  for team in sim.teams():
+    if sim.paintCount[team] < 0 or sim.paintCount[team] > sim.paintOwner.len:
+      raise newException(SimGuardError,
+        "paintCount[" & teamText(team) & "] = " & $sim.paintCount[team] &
+        " is outside 0.." & $sim.paintOwner.len)
+    if sim.hillPaint[team] < 0 or sim.hillPaint[team] > sim.hillFloorTiles:
+      raise newException(SimGuardError,
+        "hillPaint[" & teamText(team) & "] = " & $sim.hillPaint[team] &
+        " exceeds hillFloorTiles " & $sim.hillFloorTiles)
+  for i in 0 ..< sim.players.len:
+    let p = sim.players[i]
+    if p.alive and (p.x < 0 or p.y < 0 or p.x >= MapWidth or
+        p.y >= MapHeight):
+      raise newException(SimGuardError,
+        "cog " & $i & " is outside the map at " & $p.x & "," & $p.y)
+
 proc hillOwnsFor*(sim: SimServer, team: Team): bool {.inline.} =
   ## Whether `team` covers at least `hillOwnPermille` of the hill's FLOOR
   ## tiles. The threshold is > 500 by config validation, so at most one team

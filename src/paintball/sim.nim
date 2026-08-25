@@ -4065,6 +4065,12 @@ proc step*(
   # NEW (paintball), in the design note's order: the buff snapshot, then the
   # hill, then the KotH end conditions IN PLACE OF the capture/wipe checks.
   sim.updatePaintBuff()
+  if sim.config.floorPaint or sim.config.hill:
+    ## The sim guard: the incremental paint/hill counters and the cog
+    ## positions every score is derived from, checked before a game is ended
+    ## on them. A trip raises SimGuardError, which the server's tick loop
+    ## turns into `fault` / `sim_fault` (design §End conditions row 5).
+    sim.checkPaintInvariants()
   sim.updateHill()
   if sim.config.hill:
     sim.checkKothEnd()

@@ -77,3 +77,39 @@ suite "scoring":
     check results["names"][0].getStr() == "daveey"
     check results["names"][1].getStr() == "daveey-1"
     check results["team"][0].getStr() == "red"
+
+  test "a tripped sim guard is a REAL end condition, not a crash":
+    ## Design §End conditions row 5 and §Tests 8: "a raised sim guard yields
+    ## fault/sim_fault with 0.5/0.5 and a partial replay". The scoring half was
+    ## always implemented; nothing ever RAISED, so ReasonFault/EndRuleSimFault
+    ## were constants nothing could reach. paint.checkPaintInvariants runs once
+    ## per tick under the paint gates and the server's tick loop turns its
+    ## SimGuardError into the fault ending.
+    var sim = newPaintballSim()
+    ## Healthy state passes, every tick of a normal game.
+    sim.checkPaintInvariants()
+    ## An incremental counter that has drifted past the grid it counts is
+    ## exactly the case: every score is downstream of it.
+    sim.hillPaint[Red] = sim.hillFloorTiles + 1
+    expect SimGuardError:
+      sim.checkPaintInvariants()
+    ## And it trips through the real tick path, not just the guard call.
+    var prev = newSeq[InputState](sim.players.len)
+    let inputs = newSeq[InputState](sim.players.len)
+    expect SimGuardError:
+      sim.step(inputs, prev)
+    ## A cog outside the map is the other named invariant.
+    var second = newPaintballSim()
+    second.players[0].x = MapWidth + 40
+    expect SimGuardError:
+      second.checkPaintInvariants()
+    ## The scoring side of the fault ending: 0.500 each, both losers.
+    var faulted = newPaintballSim()
+    faulted.endReason = ReasonFault
+    faulted.endRule = EndRuleSimFault
+    let results = parseJson(faulted.playerResultsJson())
+    check results["reason"].getStr() == ReasonFault
+    check results["endRule"].getStr() == EndRuleSimFault
+    for seat in 0 .. 1:
+      check abs(results["scores"][seat].getFloat() - 0.5) < 1e-9
+      check not results["win"][seat].getBool()

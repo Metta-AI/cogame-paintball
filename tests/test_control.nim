@@ -176,6 +176,21 @@ suite "control layer and scripted baselines":
               inputs[cogIndex] = decodeInputMask(
                 ctl.compileMask(sim, order, cogIndex))
               break
+        if tick mod 400 == 0:
+          var line = ""
+          for cogIndex in sim.commandedCogs(sweeperSeat):
+            let p = sim.players[cogIndex]
+            var gx, gy, mask = 0
+            for order in directives[sweeperSeat].orders:
+              if order.cogIndex == cogIndex:
+                let g = ctl.goalFor(sim, order, cogIndex)
+                gx = g.x
+                gy = g.y
+                mask = int(ctl.compileMask(sim, order, cogIndex))
+            line.add " #" & $cogIndex & " " & $p.x & "," & $p.y &
+              (if p.alive: "" else: "!dead") & " brads " & $p.aimBrads &
+              " -> " & $gx & "," & $gy & " mask " & $mask
+          echo "TRACE ", teamText(sweeper), " t", tick, line
         sim.step(inputs, prev)
         prev = inputs
         let owner = if sim.hillOwned: ord(sim.hillOwner) else: -1
@@ -183,6 +198,16 @@ suite "control layer and scripted baselines":
           owners.add(owner)
           lastOwner = owner
         peak = max(peak, sim.hillCoveragePct(sweeper))
+      block:
+        var hills = ""
+        for tile in sim.hillTiles:
+          let c = sim.paintTileCentre(tile)
+          hills.add " " & $c.x & "," & $c.y & ":" &
+            (if sim.paintFloor[tile]: $sim.paintOwner[tile] else: "W")
+        echo "TRACE hill ", teamText(sweeper), " anchors red ",
+          sim.gameMap.teamAnchor(Red), " blue ", sim.gameMap.teamAnchor(Blue),
+          " map ", MapWidth, "x", MapHeight, " grid ", sim.paintGridW, "x",
+          sim.paintGridH, " |", hills
       echo teamText(sweeper), " sweeping: peak coverage ", peak, "% (need ",
         sim.config.hillOwnPermille div 10, "%) | owners ", owners,
         " | hill paint ", sim.hillPaint[sweeper], " of ", sim.hillFloorTiles,
@@ -195,7 +220,8 @@ suite "control layer and scripted baselines":
       check sim.hillOwner == sweeper
       ## The hill started unowned and ended this squad's: it changed hands.
       check owners.len >= 1
-      check owners[^1] == ord(sweeper)
+      if owners.len >= 1:
+        check owners[^1] == ord(sweeper)
 
   test "two evenly-matched baselines both spray, and the hill stays contested":
     ## The symmetric run. What is STRUCTURAL here is that both squads act:

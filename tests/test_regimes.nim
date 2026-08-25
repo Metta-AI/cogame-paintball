@@ -37,22 +37,53 @@ suite "regimes":
     check sim.cogAlias(2) == "RED-beta"
     check sim.cogAlias(7) == "BLUE-delta"
 
-  test "an uncommanded teammate produces the holdline mask byte for byte":
+  test "an uncommanded teammate follows holdline, never the seat's directive":
     ## In a visitor game beta/gamma/delta must be indistinguishable from a
     ## pure holdline run: that is what makes "adapt to a partner you know the
     ## rules of" true rather than aspirational.
+    ##
+    ## The comparison has to be against the OTHER path, not the same call
+    ## twice: the seat's directive is a `fall_back` to the far corner, which
+    ## compiles to a visibly different mask from holdline's hill work, so a
+    ## leak from alpha's directive into its partners would fail here.
     var sim = newPaintballSim(paintballConfigJson(regimes = @["visitor"]))
     var ctl = initControlState(sim)
     ctl.observeEnemies(sim)
-    for cogIndex in sim.squadCogs(0):
-      if sim.seatCommands(0, cogIndex):
-        continue
-      let
-        viaSquad = scriptedDirective(ctl, sim, blHoldline, @[cogIndex])
-        viaPure = scriptedDirective(ctl, sim, blHoldline, @[cogIndex])
-      check viaSquad.orders.len == 1
-      check ctl.compileMask(sim, viaSquad.orders[0], cogIndex) ==
-        ctl.compileMask(sim, viaPure.orders[0], cogIndex)
+    let seat = 0
+    let commanded = sim.commandedCogs(seat)
+    check commanded.len == 1                     ## alpha only, in `visitor`
+    check commanded[0] in sim.squadCogs(seat)
+    var seatDirective = SquadDirective(source: dsLlm, note: "corner")
+    for cogIndex in sim.squadCogs(seat):
+      seatDirective.orders.add(CogOrder(
+        cogIndex: cogIndex, id: sim.cogAlias(cogIndex), intent: intFallBack,
+        targetX: 60, targetY: 60))
+    var differed = 0
+    for cogIndex in sim.squadCogs(seat):
+      ## The dispatch the server does: the seat's order for a cog it commands
+      ## under this regime, holdline's for one it does not.
+      var order: CogOrder
+      if sim.seatCommands(seat, cogIndex):
+        for candidate in seatDirective.orders:
+          if candidate.cogIndex == cogIndex:
+            order = candidate
+      else:
+        order = scriptedDirective(ctl, sim, blHoldline, @[cogIndex]).orders[0]
+      let actual = ctl.compileMask(sim, order, cogIndex)
+      var fromSeat = 0'u8
+      for candidate in seatDirective.orders:
+        if candidate.cogIndex == cogIndex:
+          fromSeat = ctl.compileMask(sim, candidate, cogIndex)
+      if sim.seatCommands(seat, cogIndex):
+        check actual == fromSeat            ## alpha IS the seat's cog
+      else:
+        check order.intent != intFallBack   ## and the others are not
+        if actual != fromSeat:
+          inc differed
+    ## At least one partner visibly refuses the seat's order (all three are on
+    ## hill work while it says "walk to the corner"), so this cannot pass by
+    ## the two paths happening to agree.
+    check differed >= 1
 
   test "the regime array advances resident -> visitor across games":
     var config = defaultGameConfig()

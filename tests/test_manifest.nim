@@ -40,7 +40,10 @@ suite "coworld manifest":
 
   test "results_schema names exactly the keys playerResultsJson writes":
     var sim = newPaintballSim()
-    sim.gameHill = @[[600, 300]]
+    var half: array[Team, int]
+    half[Red] = 600
+    half[Blue] = 300
+    sim.gameHill = @[half]
     sim.gameRegimes = @[regimeResident]
     let
       produced = parseJson(sim.playerResultsJson())

@@ -82,29 +82,29 @@ suite "paint grid":
     check probe.hillPaint[Blue] == scan.hillBlue
     check scan.red + scan.blue > 0
 
-  test "painting is mirror-symmetric about the arena's midline":
-    ## The arena is mirror-symmetric, so the mirror-image burst on the
-    ## mirror-image position must paint the mirror-image tiles. Anything else
-    ## is a team-fairness bug in the cone predicate.
-    var matched = 0
-    var compared = 0
-    for ay in countup(MapHeight div 4, 3 * MapHeight div 4, 17):
-      var left = newPaintballSim()
-      var right = newPaintballSim()
-      let
-        ax = MapWidth div 3
-        mirrored = MapWidth - 1 - ax
-      left.placePlayer(0, ax, ay)
-      left.players[0].arcAimBrads = 0            ## east
-      left.players[0].arcTicksLeft = SprayPaintActiveTicks
-      discard left.paintConeTiles(0)
-      right.placePlayer(0, mirrored, ay)
-      right.players[0].arcAimBrads = AimBradsTurn div 2   ## west
-      right.players[0].arcTicksLeft = SprayPaintActiveTicks
-      discard right.paintConeTiles(0)
-      inc compared
-      check left.paintCount[Red] == right.paintCount[Red]
-      if left.paintCount[Red] > 0:
-        inc matched
-    check compared > 0
-    check matched > 0
+  test "the cone predicate is exactly mirror-symmetric":
+    ## Team fairness lives in the PREDICATE, not in the tile counts: the 34px
+    ## grid does not divide 1235 evenly, so the grid itself is not mirror-
+    ## aligned and comparing painted-tile counts across the midline would be
+    ## testing quantisation. What must hold exactly is that spraying east from
+    ## the origin covers a point iff spraying west covers its x-mirror — the
+    ## integer fixed-point aim table has to be symmetric to the bit.
+    for dx in countup(-400, 400, 7):
+      for dy in countup(-200, 200, 7):
+        check tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth, dx, dy) ==
+          tileInCone(0, 0, AimBradsTurn div 2, SprayPaintReach,
+                     SprayPaintMaxWidth, -dx, dy)
+        ## And the same for the vertical axis: north vs south.
+        check tileInCone(0, 0, AimBradsTurn div 4, SprayPaintReach,
+                         SprayPaintMaxWidth, dx, dy) ==
+          tileInCone(0, 0, 3 * AimBradsTurn div 4, SprayPaintReach,
+                     SprayPaintMaxWidth, dx, -dy)
+
+  test "the cone reaches forward and nothing behind the sprayer":
+    check tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth, 40, 0)
+    check not tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth, -40, 0)
+    check not tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth,
+                         SprayPaintReach + 20, 0)
+    ## It widens with distance: a lateral offset legal far out is illegal close in.
+    check tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth, 160, 30)
+    check not tileInCone(0, 0, 0, SprayPaintReach, SprayPaintMaxWidth, 20, 30)

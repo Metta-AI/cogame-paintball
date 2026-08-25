@@ -48,7 +48,11 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
   var ctl = initControlState(sim)
   var directives = newSeq[SquadDirective](2)
   let kinds = [blHoldline, blSprayer]
-  sim.startGame()
+  ## Deliberately NOT sim.startGame(): the server never calls it either — the
+  ## first sim.step runs stepLobby, which starts the game when the roster is
+  ## full and startWaitTicks is 0. Starting it by hand here shifts
+  ## gameStartTick by one tick relative to playback and the hash chain
+  ## diverges at tick 1.
   var gamesPlayed = 0
   var prev = newSeq[InputState](sim.players.len)
   while gamesPlayed < Games and sim.tickCount < Ticks * Games + 400:

@@ -57,9 +57,15 @@ suite "scoring":
   test "the results document reports both halves separably":
     var sim = newPaintballSim(paintballConfigJson(
       maxTicks = 600, maxGames = 2, regimes = @["resident", "visitor"]))
-    sim.gameHill = @[[900, 180], [200, 200]]
+    var resident, visitor: array[Team, int]
+    resident[Red] = 900
+    resident[Blue] = 180
+    visitor[Red] = 200
+    visitor[Blue] = 200
+    sim.gameHill = @[resident, visitor]
     sim.gameRegimes = @[regimeResident, regimeVisitor]
-    sim.hillTicks = [0, 0]
+    sim.hillTicks[Red] = 0
+    sim.hillTicks[Blue] = 0
     let results = parseJson(sim.playerResultsJson())
     check results["games"].getInt() == 2
     check results["residentScore"][0].getFloat() == 1.0

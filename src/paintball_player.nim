@@ -22,6 +22,10 @@ import
   bitworld/spriteprotocol,
   whisky
 
+const
+  ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
+  ConnectRetryMs = 500
+
 proc registrationBlob(prompt, scripted, policy: string): string =
   ## The one registration message. `scripted` is JSON null when the seat is
   ## an LLM seat, so the server can tell "no baseline named" from "holdline
@@ -64,13 +68,34 @@ when isMainModule:
     " baseline=", (if scripted.len > 0: scripted else: "holdline"),
     " label=", label
 
-  # The whole session is wrapped: whisky's receiveMessage RAISES on a close
-  # frame or a truncated read (only a timeout returns none), and mummy's send
-  # only QUEUES — so the game's own quit(0) can outrun the flushed frame. A
-  # naive player exits 1 on that race and fails certification intermittently
+  # The game bakes its supersampled board render caches BEFORE it opens the
+  # listener (a viewer's first-message clock starts at connect, so nothing may
+  # be accepted until every frame can be assembled instantly). The episode
+  # runner starts the players at the same instant as the game, so the first
+  # dial always lands on a closed port: RETRY, bounded, until the seat exists.
+  var
+    socket: WebSocket = nil
+    everConnected = false
+  for attempt in 0 ..< ConnectAttempts:
+    try:
+      socket = newWebSocket(url)
+      everConnected = true
+      break
+    except CatchableError as error:
+      if attempt == 0:
+        echo "paintball player: game not listening yet (", error.msg,
+          "); retrying"
+      sleep(ConnectRetryMs)
+  if not everConnected:
+    quit("paintball player: game never accepted a connection", 1)
+  echo "paintball player: connected"
+
+  # From here the whole session is wrapped: whisky's receiveMessage RAISES on a
+  # close frame or a truncated read (only a timeout returns none), and mummy's
+  # send only QUEUES — so the game's own quit(0) can outrun the flushed frame.
+  # A naive player exits 1 on that race and fails certification intermittently
   # (cogame-raid 0.1.3). Exiting 0 on a dead socket is the fix.
   try:
-    let socket = newWebSocket(url)
     socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
     var resent = false
     while true:

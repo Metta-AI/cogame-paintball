@@ -96,16 +96,16 @@ suite "broadcast chrome":
     ## is swallowed by the alias block's `var markBeat = C.markBeat`, leaving
     ## unlabelled div markers that never seek.
     let banner = page.find("PAINTBALL additions to the inherited")
-    let block = page[banner .. ^1]
+    let appended = page[banner .. ^1]
     for alias in ["markBeat", "renderBeatMarkers", "ingestBeats", "setVerdict",
                   "renderClock", "renderTransport", "recordMomentum",
                   "renderMomentum", "ingestLeadSeries", "ingestLullSpans",
                   "renderLullSpans", "killMarkerTeam", "captureTeam",
                   "teamPerkGroups", "perkIconsHtml", "setHandicap"]:
-      check ("function " & alias) notin block
-      check ("var " & alias) notin block
+      check ("function " & alias) notin appended
+      check ("var " & alias) notin appended
     ## And the block's own beat builder is deliberately NOT called markBeat.
-    check "function pbBeat(" in block
+    check "function pbBeat(" in appended
 
   test "chrome_common.js is byte-identical to the coworld-ctf original":
     ## The chrome-provenance pin. Everything paintball adds lives in the

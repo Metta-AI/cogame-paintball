@@ -3813,8 +3813,19 @@ proc resetToLobby*(sim: var SimServer) =
   ## to move and land inside the stone the new game starts with. (Safe to run
   ## with the roster already emptied above: no one is left to be engulfed, so
   ## the displacement pass this returns true for has nothing to do.)
-  sim.tickCount = 0
-  discard sim.applyDiamondGeometry(0)
+  if sim.config.numAgents > 0:
+    ## A paintball EPISODE is two games, and the replay codec stops parsing at
+    ## the first non-increasing tick hash (ReplaySpec.hashOrder = rhoStop). So
+    ## the tick clock must stay MONOTONIC across the games: rewinding it here
+    ## truncated the recording at game one and threw the whole visitor half —
+    ## half the league score — away. The diamonds are still rewound to spin
+    ## frame 0 for the reason above; the very next updateAnimatedDiamonds
+    ## re-stamps whatever frame the running clock implies, so the geometry
+    ## stays a pure function of the tick either way.
+    discard sim.applyDiamondGeometry(0)
+  else:
+    sim.tickCount = 0
+    discard sim.applyDiamondGeometry(0)
   sim.resetGrenades()
   sim.resetMedKits()
   sim.resetShields()

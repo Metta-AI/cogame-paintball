@@ -1,3 +1,10 @@
+> **ARCHIVED (2026-08-25).** Paintball King of the Hill was merged back into
+> [Metta-AI/coworld-ctf](https://github.com/Metta-AI/coworld-ctf) (PR #307) as a
+> config-gated mode of the paintbot engine, and now runs as the **KOTH** league
+> under the paintbot coworld (softmax.com/paintbot/koth). This repo is frozen;
+> the living code, docs and tests are in coworld-ctf (`docs/paintball/`,
+> `tests/test_pb_*.nim`).
+
 # Paintball — King of the Hill
 
 Two four-cog squads fight over one central hill by **painting the floor**.

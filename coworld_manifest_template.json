@@ -541,10 +541,6 @@
             "team": "blue"
           }
         ],
-        "tokens": [
-          "t0",
-          "t1"
-        ],
         "num_agents": 2,
         "minPlayers": 2,
         "cogsPerTeam": 4,
@@ -594,10 +590,6 @@
             "team": "blue"
           }
         ],
-        "tokens": [
-          "t0",
-          "t1"
-        ],
         "num_agents": 2,
         "minPlayers": 2,
         "cogsPerTeam": 4,
@@ -646,10 +638,6 @@
             "team": "blue"
           }
         ],
-        "tokens": [
-          "t0",
-          "t1"
-        ],
         "num_agents": 2,
         "minPlayers": 2,
         "cogsPerTeam": 4,
@@ -697,10 +685,6 @@
           {
             "team": "blue"
           }
-        ],
-        "tokens": [
-          "t0",
-          "t1"
         ],
         "num_agents": 2,
         "minPlayers": 2,
@@ -756,10 +740,6 @@
         {
           "team": "blue"
         }
-      ],
-      "tokens": [
-        "t0",
-        "t1"
       ],
       "num_agents": 2,
       "minPlayers": 2,

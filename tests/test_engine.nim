@@ -29,12 +29,16 @@ suite "decision engine":
     var config = defaultGameConfig()
     config.update(paintballConfigJson())
     check config.attempt1Ms + config.retryMs <= config.turnBudgetMs
-    ## curly's timeout granularity is whole seconds; the rounded pair must
-    ## still fit, which is what makes 4.5 + 2.0 <= 7.0 real rather than
-    ## nominal.
-    let rounded = (config.attempt1Ms + 999) div 1000 +
-      (config.retryMs + 999) div 1000
-    check rounded * 1000 <= config.turnBudgetMs
+    ## curly's timeout granularity is whole seconds, and decide.turn FLOORS
+    ## the conversion, so the transport deadline is never longer than the
+    ## configured one. What has to hold is the note's worst case — a turn that
+    ## times out twice — with margin inside the per-turn cap, not merely
+    ## equal to it: 4 + 2 = 6 s <= 6.5 s <= 7.0 s.
+    let rounded = max(1, config.attempt1Ms div 1000) +
+      max(1, config.retryMs div 1000)
+    check rounded * 1000 <= config.attempt1Ms + config.retryMs
+    check rounded * 1000 <= 6500
+    check rounded * 1000 < config.turnBudgetMs
 
   test "turnSpacingMs holds two seats under the sidecar's 30/min cap":
     var config = defaultGameConfig()

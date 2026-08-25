@@ -345,11 +345,13 @@ proc turn*(
         SystemPrompt, userMessage(engine.seats[seat].prompt, user))
       batch.post(request.url, request.headers, request.body, $seat)
     let started = getMonoTime()
-    # curly's timeout is whole SECONDS, so the 4.5 s / 2.0 s deadlines round
-    # up to 5 s / 2 s; the sub-second half of the pin is enforced by the
-    # monotonic per-turn bound above and re-checked immediately below.
+    # curly's timeout is whole SECONDS, so a sub-second deadline has to round
+    # DOWN: rounding 4500 up to 5 s made a twice-timed-out turn take 5 + 2 =
+    # 7.0 s, exactly the turnBudgetMs cap rather than the note's 6.5 s worst
+    # case, and left the outer monotonic bound with nothing to spare. Floored,
+    # the pair is 4 + 2 = 6 s and the budget keeps its margin.
     let responses = engine.client.curl.makeRequests(
-      batch, max(1, (deadlineMs + 999) div 1000))
+      batch, max(1, deadlineMs div 1000))
     let latency = (getMonoTime() - started).inMilliseconds.int
     var stillOpen: seq[int]
     for position, seat in open:

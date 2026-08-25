@@ -10,8 +10,10 @@
 ##
 ## DEGRADE, NEVER HANG. Every wait here is bounded: attempt 1 gets
 ## `attempt1Ms`, the single retry gets `retryMs`, and the whole turn is
-## wrapped in a monotonic `turnBudgetMs` deadline. On a second failure the
-## seat plays the `holdline` scripted directive for that turn and a `fallback`
+## wrapped in a monotonic `turnBudgetMs` deadline. A provider throttle with no
+## other candidate model skips the retry outright (it cannot land) and fails
+## fast to the scripted layer for that turn. On a second failure the seat
+## plays the `holdline` scripted directive for that turn and a `fallback`
 ## record names the cause. No failure mode leaves a cog unactuated: the
 ## control layer always has a directive — this turn's, else last turn's, else
 ## `holdline`'s.
@@ -314,6 +316,10 @@ proc turn*(
     game = sim.gameIndex + 1
     budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
     turnStart = getMonoTime()
+  ## Throttle state is PER TURN: a daily-token 429 on turn k says nothing
+  ## about turn k+1 (the sidecar's window may have rolled), so the flag is
+  ## cleared here and only suppresses this turn's retry.
+  engine.client.throttled = false
 
   # --- budget guard: settle EARLY rather than overrun -----------------------
   # If two more full turns would not fit inside the engine's own wall-clock
@@ -430,6 +436,12 @@ proc turn*(
         if responses[position].error.len > 0:
           cause = (if "timeout" in responses[position].error.toLowerAscii():
                      "timeout" else: "transport_error")
+        elif error.msg.startsWith("llm throttled"):
+          ## Name the throttle for what it is. Reporting a 429 as
+          ## `parse_error` is what made the hosted log unreadable: 205
+          ## "falling back (parse_error)" lines for an episode whose only
+          ## fault was a daily-token cap.
+          cause = "throttled"
         result.add(fallbackRecord(
           game, turnIndex, seat, attempt + 1, cause, error.msg))
         echo "paintball llm: seat ", seat, " attempt ", attempt + 1,
@@ -437,6 +449,14 @@ proc turn*(
         stillOpen.add(seat)
     open = stillOpen
     inc attempt
+    if engine.client.throttled and open.len > 0:
+      # FAIL FAST. The only model left answered 429, so the retry batch would
+      # be refused the same way: spend the rest of the turn on the scripted
+      # layer instead of on a call that cannot land. Bounded, and recorded as
+      # a `fallback` with cause `throttled` by the block below.
+      echo "paintball llm: provider throttled with no other candidate; ",
+        open.len, " seat(s) fall back for turn ", turnIndex
+      break
 
   # --- anything still open plays holdline for this turn ---------------------
   for seat in open:
@@ -448,6 +468,7 @@ proc turn*(
       if engine.client.disabled or engine.client.transport == ltNone:
         "no_credentials"
       elif engine.llmOff: "budget_guard"
+      elif engine.client.throttled: "throttled"
       else: "parse_error"
     result.add(fallbackRecord(game, turnIndex, seat, 2, cause,
       "seat fell back to the holdline directive"))

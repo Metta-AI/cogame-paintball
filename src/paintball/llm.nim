@@ -45,6 +45,12 @@ type
     model*: string
     maxOutputTokens*: int
     disabled*: bool
+    throttled*: bool
+      ## The provider answered 429 and there is no other candidate model to
+      ## rotate to. Set per turn, cleared by the turn loop: retrying inside
+      ## the same turn cannot succeed, so the seat fails fast to the scripted
+      ## fallback instead of spending the turn budget on a call that will be
+      ## refused again (paintball round 2, 2026-08-25).
 
   LlmError* = object of ValueError
 
@@ -63,19 +69,22 @@ proc resolveApiKey(): string =
 
 proc bedrockModelIds(): seq[string] =
   ## Bedrock inference-profile candidates, tried in order; BEDROCK_MODEL pins
-  ## one. Haiku leads because hosted Bedrock capacity is shared account-wide
-  ## and the sonnet profiles run out of daily tokens first.
+  ## one. There is exactly ONE candidate — haiku — because every sonnet
+  ## inference profile times out on every sidecar call.
   ##
-  ## `us.anthropic.claude-sonnet-4-6` is deliberately NOT a candidate: it
-  ## times out on EVERY sidecar call, so one throttle on haiku cascades into
-  ## a whole episode of scripted fallbacks (cogame-raid round 2, 2026-08-23).
+  ## `us.anthropic.claude-sonnet-4-6` was never a candidate (cogame-raid round
+  ## 2, 2026-08-23) and `us.anthropic.claude-sonnet-4-5-20250929-v1:0` is not
+  ## one either: it was the ladder fallback for paintball 0.1.2 and the hosted
+  ## round-2 game log recorded 133 calls to it, every single one returning
+  ## "Timeout was reached" and none returning text. One haiku throttle then
+  ## cascaded into a whole episode of scripted fallbacks — the retry is what
+  ## burned the turn, not the throttle. With no second candidate a throttle
+  ## fails fast (see LlmClient.throttled) and the seat plays the scripted
+  ## fallback for that turn only.
   let pinned = getEnv("BEDROCK_MODEL").strip()
   if pinned.len > 0:
     return @[pinned]
-  @[
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-  ]
+  @["us.anthropic.claude-haiku-4-5-20251001-v1:0"]
 
 proc tryNextBedrockModel(client: LlmClient, why: string): bool =
   if client.transport != ltBedrock or
@@ -177,7 +186,10 @@ proc textOf*(
       LlmError, "llm auth failed (" & $response.code & ") at " & url & ": " & detail)
   if response.code == 429:
     let detail = response.body.truncateRunes(MaxFallbackDetailRunes)
-    discard client.tryNextBedrockModel("throttled")
+    if not client.tryNextBedrockModel("throttled"):
+      ## Nothing left to rotate to: a second call this turn would be refused
+      ## the same way, so the turn loop must not spend its retry on it.
+      client.throttled = true
     raise newException(LlmError, "llm throttled (429): " & detail)
   if response.code < 200 or response.code >= 300:
     raise newException(LlmError, "anthropic error " & $response.code & ": " &

@@ -175,3 +175,37 @@ suite "decision engine":
     check "falling back" in llm or "falling back" in decide
     ## And on the real path: a seat with no credentials logs both.
     check "falling back to holdline" in decide
+
+  test "haiku is the ONLY bedrock candidate and a throttle fails fast":
+    ## Paintball 0.1.2 listed `us.anthropic.claude-sonnet-4-5` as the ladder
+    ## fallback. Hosted round 2 called it 133 times and every single call
+    ## returned "Timeout was reached": one haiku 429 therefore cost the whole
+    ## episode, because each seat spent its retry on a model that never
+    ## answers (the cogame-raid 2026-08-23 scar, reproduced 2026-08-25).
+    putEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "http://127.0.0.1:9100")
+    putEnv("AWS_BEARER_TOKEN_BEDROCK", "test-token")
+    delEnv("BEDROCK_MODEL")
+    var config = defaultGameConfig()
+    let bedrock = newLlmClient(config)
+    check bedrock.transport == ltBedrock
+    let request = bedrock.requestFor(SystemPrompt, "view")
+    check "haiku" in request.url
+    check "sonnet" notin request.url
+    ## Rotation is not removed, only emptied: BEDROCK_MODEL still pins one.
+    putEnv("BEDROCK_MODEL", "us.anthropic.claude-opus-4-1-20250805-v1:0")
+    check "opus" in newLlmClient(config).requestFor(SystemPrompt, "v").url
+    delEnv("BEDROCK_MODEL")
+    delEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME")
+    delEnv("AWS_BEARER_TOKEN_BEDROCK")
+    ## And a 429 with nothing to rotate to sets `throttled`, which is what
+    ## makes the turn loop skip a retry it cannot win.
+    var client = LlmClient(transport: ltAnthropic)
+    check not client.throttled
+    expect LlmError:
+      discard client.textOf(
+        Response(code: 429,
+          body: """{"message":"Too many tokens per day"}"""), "", "url")
+    check client.throttled
+    ## Fail-fast is a bounded fallback, not a disabled client: the next turn
+    ## calls again.
+    check not client.disabled

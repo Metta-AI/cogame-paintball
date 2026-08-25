@@ -162,3 +162,16 @@ suite "decision engine":
     config.update(paintballConfigJson())
     check config.wallClockBudgetSeconds <= 720
     check DefaultWallClockBudgetSeconds <= 720
+
+  test "the log carries the phrases phase 60 greps the game log for":
+    ## Design §Where the decision happens: "phase 60 greps the *game* log for
+    ## `falling back` / `LLM provider is unavailable`". Those two phrases are
+    ## the phase-60 verification contract, so they are pinned here rather than
+    ## left to drift out of the echo lines.
+    let
+      llm = readFile("src/paintball/llm.nim")
+      decide = readFile("src/paintball/decide.nim")
+    check "LLM provider is unavailable" in llm
+    check "falling back" in llm or "falling back" in decide
+    ## And on the real path: a seat with no credentials logs both.
+    check "falling back to holdline" in decide

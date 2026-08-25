@@ -121,7 +121,10 @@ proc newLlmClient*(config: GameConfig): LlmClient =
   else:
     result.transport = ltNone
     result.disabled = true
-    echo "paintball llm: no LLM credentials; using scripted fallback"
+    ## The exact phrase phase 60 greps the GAME log for, alongside "falling
+    ## back" below: "LLM provider is unavailable".
+    echo "paintball llm: no credentials — the LLM provider is unavailable; ",
+      "every turn is falling back to the scripted layer"
 
 proc requestFor*(
   client: LlmClient, system, user: string

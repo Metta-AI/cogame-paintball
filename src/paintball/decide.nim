@@ -352,6 +352,8 @@ proc turn*(
       let cause = if engine.llmOff: "budget_guard" else: "no_credentials"
       result.add(fallbackRecord(game, turnIndex, seat, 1, cause,
         "the LLM is unavailable for this turn; playing holdline"))
+      echo "paintball llm: seat ", seat, " falling back to holdline (", cause,
+        ") on turn ", turnIndex
     else:
       var directive = engine.scriptedFor(
         sim, seat, engine.seats[seat].baseline)
@@ -431,7 +433,7 @@ proc turn*(
         result.add(fallbackRecord(
           game, turnIndex, seat, attempt + 1, cause, error.msg))
         echo "paintball llm: seat ", seat, " attempt ", attempt + 1,
-          " failed: ", error.msg
+          " failed, falling back if it fails again: ", error.msg
         stillOpen.add(seat)
     open = stillOpen
     inc attempt
@@ -449,3 +451,6 @@ proc turn*(
       else: "parse_error"
     result.add(fallbackRecord(game, turnIndex, seat, 2, cause,
       "seat fell back to the holdline directive"))
+    ## "falling back" is the phrase phase 60 greps the GAME log for.
+    echo "paintball llm: seat ", seat, " falling back to holdline (", cause,
+      ") on turn ", turnIndex

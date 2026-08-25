@@ -26,10 +26,10 @@ suite "scoring":
       let
         residentMargin = rng.rand(-3000 .. 3000)
         visitorMargin = rng.rand(-3000 .. 3000)
-        a = (gameScorePermille(residentMargin, 720) +
-             gameScorePermille(visitorMargin, 720)) div 2
-        b = (gameScorePermille(-residentMargin, 720) +
-             gameScorePermille(-visitorMargin, 720)) div 2
+        a = 500 + (gameScorePermille(residentMargin, 720) - 500 +
+                   gameScorePermille(visitorMargin, 720) - 500) div 2
+        b = 500 + (gameScorePermille(-residentMargin, 720) - 500 +
+                   gameScorePermille(-visitorMargin, 720) - 500) div 2
       check a + b == 1000
 
   test "winning resident and losing visitor by the same margin scores 0.500":
@@ -37,8 +37,8 @@ suite "scoring":
     ## only works with clones of itself does NOT out-rank one that also works
     ## beside strangers.
     for margin in [60, 240, 719, 720, 1500]:
-      let score = (gameScorePermille(margin, 720) +
-                   gameScorePermille(-margin, 720)) div 2
+      let score = 500 + (gameScorePermille(margin, 720) - 500 +
+                         gameScorePermille(-margin, 720) - 500) div 2
       check score == 500
 
   test "win is exactly score > 0.5, and a fault is 0.5/0.5 with no winner":

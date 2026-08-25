@@ -14,6 +14,11 @@ if [[ "${requested_output}" != /* || "$(basename "${requested_output}")" != "sta
   exit 1
 fi
 
+# `coworld build` pre-creates the bundle's output parent; CI does not, and the
+# containment check below resolves it by cd-ing in. Create it first or every
+# fresh checkout fails here (the ecos 2026-08-23 scar, inherited by every fork
+# of paintbot's hook).
+mkdir -p "$(dirname "${requested_output}")"
 output_parent="$(cd "$(dirname "${requested_output}")" && pwd -P)"
 output_dir="${output_parent}/static-replay-viewer"
 if [[ "${output_dir}" != "${repo_dir}"/* || -L "${output_dir}" ]]; then

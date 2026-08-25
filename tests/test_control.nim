@@ -164,6 +164,11 @@ suite "control layer and scripted baselines":
         inc flips
         owners.add(owner)
         lastOwner = owner
+    var unowned: seq[int]
+    for tile in sim.hillTiles:
+      if sim.paintFloor[tile] and sim.paintOwner[tile] != 1'u8:
+        unowned.add(tile)
+    echo "hill tiles RED never took: ", unowned
     echo "hill owners over the run: ", owners,
       " | hill paint red=", sim.hillPaint[Red], " blue=", sim.hillPaint[Blue],
       " of ", sim.hillFloorTiles,

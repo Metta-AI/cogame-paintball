@@ -702,7 +702,12 @@ proc squadResultsJson*(sim: SimServer): string =
       let permille = gameScorePermille(
         game.ticks[team] - game.ticks[other], sim.config.hillDecisiveTicks)
       totalTicks += game.ticks[team]
-      sum += permille
+      ## Average the DEVIATION from 500, never the permille itself: integer
+      ## division truncates toward zero, so (1000 + 999) div 2 = 999 while the
+      ## opponent's (0 + 1) div 2 = 0 — a pair summing to 999 instead of 1000.
+      ## Deviations are antisymmetric and `-x div n == -(x div n)` in Nim, so
+      ## this keeps score[0] + score[1] EXACTLY 1.0 for every legal outcome.
+      sum += permille - 500
       inc halves
       case game.regime
       of regimeResident:
@@ -714,7 +719,7 @@ proc squadResultsJson*(sim: SimServer): string =
     # A `fault` episode is 0.5 / 0.5 — an infra fault is nobody's loss.
     let score =
       if faulted or halves == 0: 500
-      else: sum div halves
+      else: 500 + sum div halves
     var
       tiles = 0
       dealt = 0

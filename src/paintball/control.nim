@@ -21,11 +21,22 @@ const
   NavCell* = PaintTile        ## nav grid cell: one cog body, like the paint grid.
   FieldRefreshTicks* = 12     ## a flow field is recomputed at most this often.
   ArriveRadius* = 20          ## px: a cog this close to its goal stops moving.
+  PaintStandoff* = 96         ## px: a cog whose intent PAINTS stops this far
+                              ## short of its target instead of standing on it.
+                              ## Standing on the tile you were sent to paint is
+                              ## a deadlock: the trigger probe looks DOWNRANGE,
+                              ## so the target itself is never in front of the
+                              ## can, and the aim vector to a goal 5px away is
+                              ## numerically meaningless.
   AimDeadBrads* = 4           ## no turn button inside this error.
   FireAimBrads* = 24          ## widest aim error that still pulls the trigger.
   HuntMemoryTicks* = 72       ## how long a seen enemy stays "known".
   HuntRangePx* = 300          ## aim priority radius for a known enemy.
-  PaintProbeAhead* = 85       ## px ahead the trigger looks for unpainted floor.
+  PaintProbeSteps* = [34, 68, 102, 136, 170]
+                              ## px along the aim the trigger samples for floor
+                              ## worth painting: one probe at a single distance
+                              ## misses both the tile under the cog's nose and
+                              ## the far end of the cone's reach.
 
 type
   NavGrid* = object
@@ -344,7 +355,10 @@ proc compileMask*(
     goal = ctl.goalFor(sim, order, cogIndex)
 
   # --- d-pad: the octant of the steering vector, unless we have arrived ---
-  if distSq(px, py, goal.x, goal.y) > ArriveRadius * ArriveRadius:
+  let stopRadius =
+    if order.intent in {intPaintHill, intPaintPath}: PaintStandoff
+    else: ArriveRadius
+  if distSq(px, py, goal.x, goal.y) > stopRadius * stopRadius:
     let steer = ctl.navSteer(sim.tickCount, px, py, goal.x, goal.y)
     let
       ax = abs(steer.dx)
@@ -398,12 +412,15 @@ proc compileMask*(
       worthIt = true
   if not worthIt and order.paintsAhead() and sim.config.floorPaint:
     let (ux, uy) = aimVector(player.aimBrads)
-    let
-      probeX = px + int(ux * float(PaintProbeAhead))
-      probeY = py + int(uy * float(PaintProbeAhead))
-      tile = sim.paintTileAt(probeX, probeY)
-    if tile >= 0 and sim.paintFloor[tile] and
-        sim.paintOwner[tile] != paintTeamCode(player.team):
-      worthIt = true
+    for ahead in PaintProbeSteps:
+      let
+        probeX = px + int(ux * float(ahead))
+        probeY = py + int(uy * float(ahead))
+        tile = sim.paintTileAt(probeX, probeY)
+      if tile >= 0 and sim.paintFloor[tile] and
+          sim.paintOwner[tile] != paintTeamCode(player.team) and
+          sim.paintPathClear(px, py, probeX, probeY):
+        worthIt = true
+        break
   if worthIt:
     result = result or ButtonA

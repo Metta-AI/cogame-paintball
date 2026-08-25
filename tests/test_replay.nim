@@ -94,6 +94,10 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
         let mask = ctl.compileMask(sim, order, cogIndex)
         inputs[cogIndex] = decodeInputMask(mask)
         writer.writeInputMaskChange(tickTime(sim.tickCount), cogIndex, mask)
+    else:
+      ## The server records the all-zero lobby masks too; see its comment.
+      for cogIndex in 0 ..< sim.players.len:
+        writer.writeInputMaskChange(tickTime(sim.tickCount), cogIndex, 0)
     let phaseBefore = sim.phase
     sim.step(inputs, prev)
     prev = inputs
@@ -118,7 +122,6 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
           sim.players[order].address, order, "")
       while writer.lastMasks.len < sim.players.len:
         writer.lastMasks.add(0)
-      prev = newSeq[InputState](sim.players.len)
   let results = sim.playerResultsJson()
   writer.writeChat(tickTime(sim.tickCount), 0,
     $(%*{"k": "result", "results": parseJson(results)}))

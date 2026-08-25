@@ -1967,6 +1967,15 @@ proc runServerLoop*(
         replayWriter.writeInputMaskChange(
           tickTime(sim.tickCount), cogIndex, mask)
       downInputs = inputs
+    elif squadMode and squadsBuilt and sim.players.len > 0:
+      # NOT playing (the lobby between the two games of an episode, or the
+      # game-over hold): the server steps with all-zero inputs, so the replay
+      # has to be told that. Without it, playback keeps re-applying the last
+      # masks of the previous game and the first Playing tick of the next one
+      # sees a different `prev` — which decides whether a fresh A press fires,
+      # and diverges the hash chain at exactly that tick.
+      for cogIndex in 0 ..< sim.players.len:
+        replayWriter.writeInputMaskChange(tickTime(sim.tickCount), cogIndex, 0)
 
     var frameEvents = newJArray()
     if replayLoaded:

@@ -3939,6 +3939,30 @@ proc buildSmoothShoutBubble(
     smoothShoutBubbleCache.clear()
   smoothShoutBubbleCache[cacheKey] = result
 
+proc shoutBubblePlacement*(
+  game: SimServer, anchorX, tailTipY, bubbleW, bubbleH: int
+): tuple[x, y: int] =
+  ## Where one speech bubble is PLACED, in logical map pixels, so that it is
+  ## always wholly inside the board — the frame every spectator client fits
+  ## the whole map into.
+  ##
+  ## The bubble grows UPWARD from the shouter, and a cog can stand on the top
+  ## row of the arena: placing it at `tailTipY - bubbleH` unclamped puts the
+  ## body at a negative y, where the map layer canvas silently clips it and a
+  ## sentence renders as a sliver. That is the cogchemists defect of
+  ## 2026-08-24 verbatim, and nothing in a load signal, a soak or a screenshot
+  ## can see it. So: if the bubble does not fit above the tail tip it FLIPS
+  ## below it (the tail is cosmetic; being read is not), and either way both
+  ## axes are clamped into the board rect.
+  let
+    maxX = max(0, game.gameMap.width - bubbleW)
+    maxY = max(0, game.gameMap.height - bubbleH)
+  result.x = clamp(anchorX - bubbleW div 2, 0, maxX)
+  result.y =
+    if tailTipY - bubbleH >= 0: tailTipY - bubbleH
+    else: tailTipY + ShoutFloat
+  result.y = clamp(result.y, 0, maxY)
+
 proc buildShoutBubble*(
   game: SimServer,
   team: Team,
@@ -4018,6 +4042,16 @@ proc buildShoutBubble*(
     ShoutPadX, ShoutPadY, 0'u8,  # palette 0 = near-black ink
     bold = true
   )
+
+proc shoutBubbleMaxHeight*(game: SimServer): int =
+  ## The height of the tallest bubble the SERVER can ever produce: the shout
+  ## cap (ShoutMaxChars runes) in the font it will be drawn in, at this
+  ## board's bubble zoom. This is the reserved band — sized from the cap the
+  ## server enforces and measured in the real font, never by eye — and it is
+  ## reserved whether or not anyone is speaking, so nothing about the scene
+  ## depends on a remark landing.
+  let zoom = shoutBubbleZoomFor(game.gameMap.width, game.gameMap.height)
+  game.buildShoutBubble(Red, repeat("W", ShoutMaxChars), zoom).height
 
 proc centeredTextX(sim: SimServer, text: string): int =
   ## Returns the centered x position for interstitial text.
@@ -4876,6 +4910,37 @@ proc overheadAnchorY(player: Player): int =
   ## Y of the soldier body's top edge — the anchor for stacking overhead UI
   ## (HP bar, name, shout) just above the helmet, independent of canvas size.
   player.y + CollisionH div 2 - SoldierBodyPx div 2
+
+proc shoutAnchor*(player: Player): tuple[x, tailTipY: int] =
+  ## Where a live shout by this cog hangs from: the bubble's tail tip, stacked
+  ## above the hp bar and the name label. One definition, used by the draw
+  ## pass, by the worst-case fixture generator and by tests/test_shouts.nim,
+  ## so no second copy of it can drift.
+  (player.x + CollisionW div 2,
+   player.overheadAnchorY() - OverheadYOffset - HpBarH - TextLineHeight - 2)
+
+proc shoutBubbleRectFor*(
+  game: SimServer, playerIndex: int, text: string
+): tuple[x, y, w, h: int] =
+  ## The map-space rect the bubble for `text` shouted by this cog occupies,
+  ## through exactly the geometry the draw pass uses. Exported so a worst-case
+  ## frame can be BUILT from it (tools/record_text_fixture.nim) and asserted
+  ## on (tests/test_shouts.nim) without re-deriving any of it.
+  ## The bubble the BOARD draws: the board section of the packet builder runs
+  ## at the supersampled render scale, and the smooth bubble it bakes there has
+  ## slightly different logical dims than the 1x pixel one, so answer for that
+  ## scale rather than for whatever the last caller left behind.
+  let previousScale = boardScale
+  boardScale = boardRenderScaleFor(game.gameMap.width, game.gameMap.height)
+  defer: boardScale = previousScale
+  let
+    player = game.players[playerIndex]
+    zoom = shoutBubbleZoomFor(game.gameMap.width, game.gameMap.height)
+    bubble = game.buildShoutBubble(player.team, text, zoom)
+    anchor = player.shoutAnchor()
+    place = shoutBubblePlacement(
+      game, anchor.x, anchor.tailTipY, bubble.width, bubble.height)
+  (place.x, place.y, bubble.width, bubble.height)
 
 proc selectSpritePlayer(
   sim: SimServer,
@@ -5951,6 +6016,11 @@ proc addShouts(
       bubble = sim.buildShoutBubble(shout.team, shout.text)
       spriteId = ShoutSpriteBase + slot
       objectId = ShoutObjectBase + slot
+      ## Same clamp as the board pass: a shouter standing on the top row of
+      ## the map would otherwise place its bubble at a negative y, where the
+      ## layer canvas clips it to a sliver.
+      place = shoutBubblePlacement(
+        sim, anchorX, tailTipY, bubble.width, bubble.height)
     packet.addBoardSpriteChanged(
       spriteDefs,
       spriteId,
@@ -5964,8 +6034,8 @@ proc addShouts(
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      anchorX - bubble.width div 2,
-      tailTipY - bubble.height,
+      place.x,
+      place.y,
       ShoutBubbleZ,
       MapLayerId,
       spriteId
@@ -6074,16 +6144,17 @@ proc addBoardShouts(
     for player in sim.players:
       if player.address == state.shoutSlots[slot]:
         if player.alive:
-          state.shoutLinger[slot].anchorX = player.x + CollisionW div 2
-          state.shoutLinger[slot].tailTipY =
-            player.overheadAnchorY() - OverheadYOffset -
-            HpBarH - TextLineHeight - 2
+          let anchor = player.shoutAnchor()
+          state.shoutLinger[slot].anchorX = anchor.x
+          state.shoutLinger[slot].tailTipY = anchor.tailTipY
         break
     let
       linger = state.shoutLinger[slot]
       bubble = sim.buildShoutBubble(linger.team, linger.text, zoom)
       spriteId = ShoutSpriteBase + slot
       objectId = ShoutObjectBase + slot
+      place = shoutBubblePlacement(
+        sim, linger.anchorX, linger.tailTipY, bubble.width, bubble.height)
     packet.addBoardSpriteChanged(
       state.spriteDefs,
       spriteId,
@@ -6096,8 +6167,8 @@ proc addBoardShouts(
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      linger.anchorX - bubble.width div 2,
-      linger.tailTipY - bubble.height,
+      place.x,
+      place.y,
       ShoutBubbleZ,
       MapLayerId,
       spriteId

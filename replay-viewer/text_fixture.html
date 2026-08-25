@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>paintball — worst-case renderer fixture</title>
+<!--
+  THE WORST-CASE RENDERER FIXTURE (acceptance checklist item 15, last bullet).
+
+  Every replay CI can produce is played by scripted baselines with no
+  ANTHROPIC_API_KEY, so the strings a spectator sees a model say are never the
+  strings CI renders. This page is the gate for that class of chrome. It loads
+  the REAL renderer — client/broadcast_core.js, byte-identical to the starter's
+  apart from one wire identifier, the same file the static bundle's Worker
+  imports — and hands it a frame built to hurt:
+
+    * every cog on the board shouting the FULL shout cap (10 runes, widest
+      glyph) in the same tick,
+    * standing on the worst positions the arena has: the whole top row, where
+      an unclamped bubble grows off the frame, plus both side walls and the
+      bottom edge,
+    * rendered at three canvas sizes, including the 360 px embedded
+      featured-match width.
+
+  Paintball rasterises bubble text into SPRITES in Nim, so viewer_smoke.mjs's
+  fillText/strokeText hook counts zero strings here and says so itself:
+  "total: 0 means the check covered nothing". This page therefore proves
+  in-frame rendering the way it can be proved for a sprite renderer, per
+  bubble, at every size:
+
+    1. the expected rect comes from the DRAW PASS's own geometry
+       (global.shoutBubbleRectFor, dumped by tools/record_text_fixture.nim),
+       and must lie inside the board;
+    2. mapped into canvas pixels it must lie inside the canvas — the check a
+       negative-y bubble fails;
+    3. the SAME frame is rendered twice, once with the shouts and once with
+       nothing shouting, and the two canvases must DIFFER inside every
+       expected rect. A bubble clipped to a sliver, drawn off-frame, or not
+       drawn at all fails on pixels rather than on eyesight;
+    4. almost all of the difference between the two frames must fall INSIDE
+       those rects, so a bubble cannot pass by being drawn somewhere else;
+    5. and the strings the fixture fed are re-checked against the cap — one
+       quietly shortened remark would leave this page passing while testing
+       nothing.
+
+  Success sets data-replay-loaded="true"; any failure sets
+  data-replay-error="<what failed>", which tools/ci/viewer_smoke.mjs
+  --strict-text-bounds fails on immediately.
+-->
+<style>
+  html, body { margin: 0; background: #0b0704; color: #f2e8d8;
+               font: 12px/1.4 monospace; }
+  #boards { display: flex; gap: 4px; }
+  canvas { background: #000; image-rendering: pixelated; }
+  #log { padding: 6px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="boards">
+  <canvas id="shout"></canvas>
+  <canvas id="quiet"></canvas>
+</div>
+<div id="log"></div>
+<script src="./wire_constants.js"></script>
+<script src="./broadcast_core.js"></script>
+<script>
+'use strict';
+(function () {
+  var SIZES = [[360, 640], [720, 480], [1280, 800]];
+  var lines = [];
+
+  function log(text) {
+    lines.push(text);
+    document.getElementById('log').textContent = lines.join('\n');
+    console.log(text);
+  }
+
+  function fail(message) {
+    log('FAIL ' + message);
+    document.documentElement.setAttribute('data-replay-error', message);
+  }
+
+  function pass() {
+    log('OK every worst-case bubble rendered inside the frame at every size');
+    document.documentElement.setAttribute('data-replay-loaded', 'true');
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function makeCore(canvasId, width, height) {
+    var canvas = document.getElementById(canvasId);
+    var core = window.BroadcastCore.create({
+      canvas: canvas,
+      websocket: false,
+      playoutBuffer: false,
+      viewportWidth: width,
+      viewportHeight: height,
+      devicePixelRatio: 1,
+      onText: function () {},
+      onStatus: function () {},
+      onFirstFrame: function () {},
+      onTransform: function () {},
+      onSendPacket: function () {}
+    });
+    core.start();
+    return { core: core, canvas: canvas };
+  }
+
+  async function load(url) {
+    var response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(url + ' returned HTTP ' + response.status);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  // Map-space rect -> canvas pixels. The board layer the core fits is
+  // `nativeW x nativeH`, blitted at `scale` from `offsetX/offsetY` (see
+  // broadcast_core.js's draw()), so the map-to-native factor is read off the
+  // transform rather than assumed.
+  function toCanvasRect(rect, transform, mapWidth) {
+    var k = transform.nativeW / mapWidth;
+    var s = transform.scale * k;
+    return {
+      x: transform.offsetX + rect.x * s,
+      y: transform.offsetY + rect.y * s,
+      w: rect.w * s,
+      h: rect.h * s
+    };
+  }
+
+  function pixels(canvas) {
+    var ctx = canvas.getContext('2d');
+    return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  }
+
+  function diffInside(a, b, width, box) {
+    // Differing pixels inside `box`, clipped to the canvas.
+    var x0 = Math.max(0, Math.floor(box.x));
+    var y0 = Math.max(0, Math.floor(box.y));
+    var x1 = Math.min(width, Math.ceil(box.x + box.w));
+    var y1 = Math.min(Math.floor(a.length / 4 / width), Math.ceil(box.y + box.h));
+    var count = 0;
+    for (var y = y0; y < y1; y++) {
+      for (var x = x0; x < x1; x++) {
+        var i = (y * width + x) * 4;
+        if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) {
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+
+  function diffOutside(a, b, width, height, boxes) {
+    var inside = new Uint8Array(width * height);
+    for (var k = 0; k < boxes.length; k++) {
+      var box = boxes[k];
+      // 2 px of slack: a sprite blitted at a fractional scale can spill a
+      // pixel past its logical rect.
+      var x0 = Math.max(0, Math.floor(box.x) - 2);
+      var y0 = Math.max(0, Math.floor(box.y) - 2);
+      var x1 = Math.min(width, Math.ceil(box.x + box.w) + 2);
+      var y1 = Math.min(height, Math.ceil(box.y + box.h) + 2);
+      for (var y = y0; y < y1; y++) {
+        for (var x = x0; x < x1; x++) inside[y * width + x] = 1;
+      }
+    }
+    var count = 0;
+    for (var p = 0; p < width * height; p++) {
+      var i = p * 4;
+      if ((a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) &&
+          !inside[p]) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async function main() {
+    var meta = await (await fetch('./text_fixture.json', { cache: 'no-store' })).json();
+
+    // (5) The fixture's own strings are still full length.
+    if (!meta.says.length) throw new Error('fixture declares no shouts');
+    for (var i = 0; i < meta.says.length; i++) {
+      if (Array.from(meta.says[i]).length !== meta.cap) {
+        throw new Error('fixture shout ' + i + ' is ' +
+          Array.from(meta.says[i]).length + ' runes, not the ' + meta.cap +
+          '-rune cap: this fixture would be testing nothing');
+      }
+    }
+    log('fixture: ' + meta.says.length + ' shouts of ' + meta.cap +
+      ' runes, board ' + meta.map.w + 'x' + meta.map.h +
+      ', reserved band ' + meta.reservedBandPx + ' px');
+
+    // (1) Every expected rect is inside the board, in map space.
+    for (var b = 0; b < meta.bubbles.length; b++) {
+      var rect = meta.bubbles[b];
+      if (rect.x < 0 || rect.y < 0 ||
+          rect.x + rect.w > meta.map.w || rect.y + rect.h > meta.map.h) {
+        throw new Error('bubble for ' + rect.alias + ' is outside the board: ' +
+          JSON.stringify(rect));
+      }
+    }
+
+    var shoutBytes = await load('./text_fixture_shout.bin');
+    var quietBytes = await load('./text_fixture_quiet.bin');
+    var shout = makeCore('shout', SIZES[0][0], SIZES[0][1]);
+    var quiet = makeCore('quiet', SIZES[0][0], SIZES[0][1]);
+    shout.core.ingest(shoutBytes);
+    quiet.core.ingest(quietBytes);
+    await sleep(500);
+
+    for (var s = 0; s < SIZES.length; s++) {
+      var width = SIZES[s][0];
+      var height = SIZES[s][1];
+      shout.core.setViewportSize(width, height, 1);
+      quiet.core.setViewportSize(width, height, 1);
+      await sleep(400);
+      var transform = shout.core.getTransform();
+      if (!transform || !(transform.scale > 0)) {
+        throw new Error('no board transform at ' + width + 'x' + height);
+      }
+      var a = pixels(shout.canvas);
+      var q = pixels(quiet.canvas);
+      if (shout.canvas.width !== quiet.canvas.width ||
+          shout.canvas.height !== quiet.canvas.height) {
+        throw new Error('the two boards rendered at different sizes');
+      }
+      var cw = shout.canvas.width;
+      var ch = shout.canvas.height;
+      var boxes = [];
+      var worst = Infinity;
+      for (var n = 0; n < meta.bubbles.length; n++) {
+        var bubble = meta.bubbles[n];
+        var box = toCanvasRect(bubble, transform, meta.map.w);
+        boxes.push(box);
+        // (2) inside the canvas, with a pixel of tolerance
+        if (box.x < -1 || box.y < -1 ||
+            box.x + box.w > cw + 1 || box.y + box.h > ch + 1) {
+          throw new Error('at ' + width + 'x' + height + ' the bubble for ' +
+            bubble.alias + ' maps to [' + Math.round(box.x) + ',' +
+            Math.round(box.y) + ',' + Math.round(box.x + box.w) + ',' +
+            Math.round(box.y + box.h) + '] outside the ' + cw + 'x' + ch +
+            ' canvas');
+        }
+        // (3) and something was really drawn there
+        var area = Math.max(1, Math.round(box.w) * Math.round(box.h));
+        var drawn = diffInside(a, q, cw, box);
+        var need = Math.max(6, Math.floor(area * 0.08));
+        worst = Math.min(worst, drawn);
+        if (drawn < need) {
+          throw new Error('at ' + width + 'x' + height + ' the bubble for ' +
+            bubble.alias + ' changed only ' + drawn + ' of ' + area +
+            ' pixels (needed ' + need + '): it was clipped, empty or not drawn');
+        }
+      }
+      // (4) the difference between the two frames is where the geometry says
+      var stray = diffOutside(a, q, cw, ch, boxes);
+      var total = stray + meta.bubbles.reduce(function (sum, bubble, index) {
+        return sum + diffInside(a, q, cw, boxes[index]);
+      }, 0);
+      if (stray > Math.max(64, Math.floor(total * 0.25))) {
+        throw new Error('at ' + width + 'x' + height + ' ' + stray + ' of ' +
+          total + ' changed pixels fell OUTSIDE every expected bubble rect');
+      }
+      log('  ' + width + 'x' + height + ': scale ' + transform.scale.toFixed(3) +
+        ', every bubble in frame, weakest bubble changed ' + worst +
+        ' pixels, ' + stray + '/' + total + ' changed pixels stray');
+    }
+    pass();
+  }
+
+  main().catch(function (error) {
+    fail(error && error.message ? error.message : String(error));
+  });
+})();
+</script>
+</body>
+</html>

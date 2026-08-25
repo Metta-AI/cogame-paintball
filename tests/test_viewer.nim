@@ -148,6 +148,27 @@ suite "broadcast chrome":
     check shell.find("'data-replay-error'") < shell.find("function setMismatchTick")
     check shell.find("'data-replay-loaded'") > loaded
 
+  test "the worst-case renderer fixture exists and CI drives it":
+    ## Checklist item 15's last bullet. The fixture is only evidence if it
+    ## loads the REAL renderer, feeds it the worst frame, renders at several
+    ## sizes and is actually run by ci.yml with --strict-text-bounds.
+    let fixture = read("replay-viewer/text_fixture.html")
+    check "./broadcast_core.js" in fixture   ## the real renderer, not a copy
+    check "BroadcastCore.create" in fixture
+    check "text_fixture_shout.bin" in fixture
+    check "text_fixture_quiet.bin" in fixture
+    check "data-replay-loaded" in fixture
+    check "data-replay-error" in fixture
+    ## Three canvas sizes, the smallest being the 360 px embed width.
+    check "[360, 640]" in fixture
+    let workflow = read(".github/workflows/ci.yml")
+    check "record_text_fixture.nim" in workflow
+    check "Render the worst-case text fixture" in workflow
+    let step = workflow.find("Render the worst-case text fixture")
+    let strict = workflow.find("--strict-text-bounds", step)
+    check strict > step
+    check workflow.find("text_fixture.html", step) > step
+
   test "no ctf_ / CTF_ identifier survives in client/, replay-viewer/ or src/":
     ## chrome_common.js is the ONE documented exception: the pin says it is
     ## inherited byte-for-byte, and it reads its wire block off the starter's

@@ -158,6 +158,32 @@ jobs:
       - name: Baseline parameter grid harness
         run: nim r --hints:off -d:release --path:src tools/tune_baselines.nim --check
 
+      # The worst-case renderer fixture's FRAME (checklist item 15, last
+      # bullet). Every replay CI can produce is played by scripted baselines
+      # with no key, so the model-authored text the viewer draws is never the
+      # text CI renders. This builds the frame that hurts -- every cog on the
+      # board shouting the full 10-rune cap, standing on the top row and the
+      # walls -- as a real Sprite v1 board packet, plus the same frame with
+      # nothing shouting and the draw pass's own expected bubble rects.
+      # wasm-viewer renders both through the real broadcast_core.js.
+      # Built HERE because this is the job with Nim, and kept OUT of the
+      # shipped bundle: it is 9 MB of CI evidence, not viewer payload.
+      - name: Build the worst-case renderer fixture frame
+        run: |
+          set -euo pipefail
+          nim c -r --hints:off -d:release --path:src \
+            -o:/tmp/record_text_fixture tools/record_text_fixture.nim \
+            dist/text-fixture-data
+          ls -la dist/text-fixture-data
+
+      - name: Upload the renderer fixture frame
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-fixture-data
+          path: dist/text-fixture-data/
+          if-no-files-found: error
+          retention-days: 14
+
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs
   # end to end in raw docker with the certification fixture's seat mix.
@@ -222,8 +248,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # The bundle is EXECUTED here, not merely built, and it is executed against
-    # the replay docker-smoke just produced -- hence the dependency.
-    needs: docker-smoke
+    # the replay docker-smoke just produced -- hence the first dependency. The
+    # second is the worst-case renderer fixture's frame, which needs Nim and so
+    # is built in the test job.
+    needs: [docker-smoke, test]
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
@@ -330,6 +358,58 @@ jobs:
             --replay "${replay}" \
             --timeout 90 \
             --strict-text-bounds
+
+      # -----------------------------------------------------------------
+      # THE WORST-CASE RENDERER FIXTURE (checklist item 15, last bullet).
+      #
+      # The gate above renders the docker-smoke replay, and that replay cannot
+      # talk: no ANTHROPIC_API_KEY, so both seats are scripted and their says
+      # are four and five characters long. Paintball's viewer DOES draw
+      # model-authored text (a `say` becomes a real in-game shout with a speech
+      # bubble over the cog), and cogchemists (2026-08-24) shipped exactly that
+      # chrome clipped to slivers with a fully green board.
+      #
+      # So: a page that loads the REAL renderer (client/broadcast_core.js from
+      # the built bundle) and hands it a frame built to hurt -- every cog
+      # shouting the full 10-rune cap at once, on the top row and the walls --
+      # rendered at 360x640, 720x480 and 1280x800. Paintball rasterises bubble
+      # text into sprites in Nim, so viewer_smoke's fillText hook counts zero
+      # strings here (it says so itself: "total: 0 means the check covered
+      # nothing"); the fixture therefore proves in-frame rendering per bubble
+      # by pixels instead -- the same frame with nothing shouting must DIFFER
+      # inside every expected bubble rect and nowhere else, and every rect must
+      # map inside the canvas. It fails by setting data-replay-error, which
+      # --strict-text-bounds turns into a red step immediately.
+      # -----------------------------------------------------------------
+      - name: Download the renderer fixture frame
+        uses: actions/download-artifact@v4
+        with:
+          name: text-fixture-data
+          path: dist/text-fixture-data
+
+      - name: Render the worst-case text fixture
+        run: |
+          set -euo pipefail
+          rm -rf dist/text-fixture fixture-evidence
+          cp -r dist/static-replay-viewer dist/text-fixture
+          cp replay-viewer/text_fixture.html dist/text-fixture/index.html
+          cp dist/text-fixture-data/text_fixture* dist/text-fixture/
+          mkdir -p fixture-evidence
+          node tools/ci/viewer_smoke.mjs \
+            --bundle dist/text-fixture \
+            --replay dist/text-fixture/text_fixture_shout.bin \
+            --timeout 90 \
+            --strict-text-bounds \
+            --out fixture-evidence
+
+      - name: Upload the renderer fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-fixture-smoke
+          path: fixture-evidence/
+          if-no-files-found: warn
+          retention-days: 14
 
       # The native<->wasm determinism gate. viewer_smoke proves the bundle
       # RENDERS; this proves it re-derives the SAME game: it re-simulates the

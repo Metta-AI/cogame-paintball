@@ -161,7 +161,11 @@ proc textOf*(
   if error.len > 0:
     raise newException(LlmError, "llm transport: " & error)
   if response.code == 401 or response.code == 403:
-    let detail = response.body[0 .. min(response.body.high, 400)]
+    ## RUNE-safe: this text becomes `fallback.detail` in the replay, and a
+    ## provider body is arbitrary bytes. A byte slice can cut a codepoint in
+    ## half, and truncateRunes downstream only SHORTENS — it cannot repair a
+    ## broken one.
+    let detail = response.body.truncateRunes(MaxFallbackDetailRunes)
     if "Model access is denied" in response.body and
         client.tryNextBedrockModel("no model access"):
       raise newException(LlmError, "bedrock model access denied: " & detail)
@@ -169,12 +173,12 @@ proc textOf*(
     raise newException(
       LlmError, "llm auth failed (" & $response.code & ") at " & url & ": " & detail)
   if response.code == 429:
-    let detail = response.body[0 .. min(response.body.high, 300)]
+    let detail = response.body.truncateRunes(MaxFallbackDetailRunes)
     discard client.tryNextBedrockModel("throttled")
     raise newException(LlmError, "llm throttled (429): " & detail)
   if response.code < 200 or response.code >= 300:
     raise newException(LlmError, "anthropic error " & $response.code & ": " &
-      response.body[0 .. min(response.body.high, 300)])
+      response.body.truncateRunes(MaxFallbackDetailRunes))
   let payload = parseJson(response.body)
   if payload{"stop_reason"}.getStr() == "refusal":
     raise newException(LlmError, "anthropic refusal")

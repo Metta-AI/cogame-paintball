@@ -1,5 +1,6 @@
 ## Tolerant parsing and repair, and the RUNE-boundary truncation rule.
 import std/[json, strutils, unicode, unittest]
+import curly
 import helpers
 
 const
@@ -133,3 +134,31 @@ Hope that helps."""
     check fallback.source == dsScripted
     for order in fallback.orders:
       check order.cogIndex in sim.commandedCogs(0)
+
+  test "a provider error body is cut on a RUNE boundary, never a byte":
+    ## The one string on the path to the replay that is NOT authored here: an
+    ## arbitrary provider body, quoted into `fallback.detail`. A byte slice at
+    ## the cap can cut a multi-byte codepoint in half, and the downstream
+    ## truncateRunes only shortens — it cannot repair one. So the cut happens
+    ## once, in runes, where the body is first quoted.
+    var client = LlmClient(transport: ltAnthropic)
+    ## 4-byte emoji straddling every plausible byte cap.
+    let body = repeat("\u{1F600}", 400)
+    var raised = ""
+    try:
+      discard client.textOf(Response(code: 429, body: body), "", "url")
+    except LlmError as error:
+      raised = error.msg
+    check raised.len > 0
+    check validateUtf8(raised) == -1
+    check raised.runeLen <= MaxFallbackDetailRunes + 40
+    check parseJson($(%*{"detail": raised}))["detail"].getStr() == raised
+    ## The same for the auth path, which quotes the body at its own cap.
+    var authClient = LlmClient(transport: ltAnthropic)
+    raised = ""
+    try:
+      discard authClient.textOf(Response(code: 403, body: body), "", "url")
+    except LlmError as error:
+      raised = error.msg
+    check validateUtf8(raised) == -1
+    check parseJson($(%*{"detail": raised}))["detail"].getStr() == raised

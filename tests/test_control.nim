@@ -2,6 +2,7 @@
 ## control layer's mask legality.
 import std/[random, strutils, unicode, unittest]
 import helpers
+import "../tools/tune_baselines"
 
 const IntentNames = ["paint_hill", "hold_hill", "hunt", "guard", "paint_path",
                      "fall_back"]
@@ -230,32 +231,58 @@ suite "control layer and scripted baselines":
         ## the whole suite on an IndexDefect.
         check owners[^1] == ord(sweeper)
 
-  test "two evenly-matched baselines both spray, and the hill stays contested":
-    ## The symmetric run — the filler-vs-filler episode a league actually
-    ## plays. Three things are STRUCTURAL and asserted: both squads lay floor
-    ## paint, the episode completes without a fault, and the hill is banked by
-    ## somebody. That last one is the anti-stalemate invariant: two squads that
-    ## both walk to the centre and neither of which can ever own it produce a
-    ## 0.500 draw every time, and a ladder of draws ranks nothing. It is also
-    ## exactly what a wedged-cog regression looks like from the outside.
+  test "holdline beats sprayer at seed 679961, and the hill changes hands twice":
+    ## The pin the design note names, restored: "a `holdline` vs `sprayer`
+    ## episode at seed 679961 completes, `holdline` wins, and the hill changes
+    ## hands at least twice (a pinned regression against a degenerate
+    ## stalemate)".
     ##
-    ## WHICH baseline wins is a balance property of two scripted policies
-    ## meeting head-on, so it is logged rather than pinned. As measured,
-    ## `sprayer` beats `holdline` clearly — it reaches 18 of 21 hill tiles and
-    ## banks ~730 hill ticks to holdline's 0, because holdline switches cogs to
-    ## `hunt` inside 200px where sprayer only does so inside 120px and keeps
-    ## painting for longer. A later balance pass has the number here.
-    var sim = newPaintballSim(paintballConfigJson(maxTicks = 3000))
-    var ctl = initControlState(sim)
-    sim.scriptedEpisode(ctl, [blHoldline, blSprayer], 3000)
-    echo "symmetric run: hill paint red=", sim.hillPaint[Red],
-      " blue=", sim.hillPaint[Blue], " of ", sim.hillFloorTiles,
-      " | hill ticks red=", sim.hillTicks[Red],
-      " blue=", sim.hillTicks[Blue],
-      " | floor paint red=", sim.paintCount[Red],
-      " blue=", sim.paintCount[Blue],
-      " | phase=", sim.phase
-    check sim.paintCount[Red] > 0
-    check sim.paintCount[Blue] > 0
-    check sim.hillTicks[Red] + sim.hillTicks[Blue] > 0
-    check sim.endReason in ["", ReasonComplete]
+    ## It is measured with the SAME driver the grid harness tunes with
+    ## (tools/tune_baselines.nim), so this test and the harness that chose
+    ## BaselineParams can never disagree about what the two baselines do. With
+    ## the note's first-guess radii (200 px hunt, 250 px guard) the ordering was
+    ## INVERTED — sprayer banked 733 hill ticks to holdline's 0, because a guard
+    ## parked 250 px off the hill leaves holdline painting three cogs against
+    ## four. The harness pulled both radii in; the ordering the note names now
+    ## holds, and this asserts it.
+    let single = playEpisode(679961, DefaultBaselineParams, holdlineOnBlue = false)
+    echo "seed 679961: holdline ", single.holdline, " hill ticks, sprayer ",
+      single.sprayer, ", hill changed hands ", single.flips, " times"
+    check single.holdline > single.sprayer      ## holdline WINS
+    check single.flips >= 2                     ## the hill CHANGES HANDS twice
+    check single.holdline + single.sprayer > 0  ## and it is banked by somebody
+    ## The episode COMPLETES, and both squads really played: two squads that
+    ## lay no paint cannot contest a hill at all.
+    check single.endReason in ["", ReasonComplete]
+    check single.paintHoldline > 0
+    check single.paintSprayer > 0
+
+  test "holdline out-banks sprayer over the tuned ladder, from both sides":
+    ## Which baseline wins one episode is a knife-edge property of two scripted
+    ## policies meeting head-on, so the ordering is also asserted the way the
+    ## ladder will actually see it: every harness seed, played from BOTH sides
+    ## of the mirror-symmetric arena, so a side bias cannot pass for a policy
+    ## edge. As measured: 5 of 6 episodes to holdline, +1762 hill ticks.
+    var
+      wins = 0
+      margin = 0
+      flips = 0
+      contested = 0
+    for seed in Seeds:
+      for holdlineOnBlue in [false, true]:
+        let outcome = playEpisode(seed, DefaultBaselineParams, holdlineOnBlue)
+        if outcome.holdline > outcome.sprayer:
+          inc wins
+        margin += outcome.holdline - outcome.sprayer
+        flips += outcome.flips
+        if outcome.flips >= 2:
+          inc contested
+    echo "ladder: holdline won ", wins, " of ", Seeds.len * 2,
+      " episodes, margin ", margin, " hill ticks, ", flips,
+      " hill changes of hands"
+    check wins * 2 > Seeds.len * 2   ## a majority, not a coin flip
+    check margin > 0
+    ## The anti-stalemate invariant, over the whole ladder: a hill nobody can
+    ## take makes every episode a 0.500 draw and a ladder of draws ranks
+    ## nothing.
+    check contested >= Seeds.len

@@ -18,8 +18,24 @@ import
   sim, directives
 
 const
-  NavCell* = PaintTile        ## nav grid cell: one cog body, like the paint grid.
+  NavCell* = 12               ## nav grid cell side, in px.
+                              ## Sized to the ARENA, not to the paint grid: the
+                              ## arena's corridors are ~26 px wide for a 13 px
+                              ## footprint, so a cell the size of a paint tile
+                              ## (34 px) has no open cell anywhere inside a gap
+                              ## between two obstacles and the flow field
+                              ## reports the whole far side of every obstacle
+                              ## column UNREACHABLE. Measured on that grid, a
+                              ## sweeping squad fell back to the straight line,
+                              ## walked into the first wall and pressed the same
+                              ## d-pad direction for two thousand ticks. At
+                              ## 12 px every 26 px corridor contains a cell
+                              ## centre with the full footprint's clearance.
   FieldRefreshTicks* = 12     ## a flow field is recomputed at most this often.
+  MaxCachedFields* = 64       ## flow fields kept before the cache is dropped.
+                              ## A field is one int per cell, so an unbounded
+                              ## cache on a fine grid is an unbounded leak over
+                              ## a long episode; eight cogs never need more.
   ArriveRadius* = 20          ## px: a cog this close to its goal stops moving.
   AimMinRangeSq* = 16 * 16    ## an aim target nearer than this gives a vector
                               ## too short to mean a direction.
@@ -27,6 +43,15 @@ const
   FireAimBrads* = 24          ## widest aim error that still pulls the trigger.
   HuntMemoryTicks* = 72       ## how long a seen enemy stays "known".
   HuntRangePx* = 300          ## aim priority radius for a known enemy.
+  StuckTicks* = 8             ## ticks of zero displacement after which a cog
+                              ## steers along the obstacle instead of into it.
+                              ## The flow field is built once, over the wall
+                              ## mask alone: it cannot know about the spinning
+                              ## diamonds' later frames, and it cannot know
+                              ## about the other seven COGS at all — four cogs
+                              ## sharing one goal in a 26 px corridor jam each
+                              ## other. Degrade-never-hang applies to a cog as
+                              ## much as to a network call.
   PaintProbeSteps* = [34, 68, 102, 136, 170]
                               ## px along the aim the trigger samples for floor
                               ## worth painting: one probe at a single distance
@@ -47,6 +72,8 @@ type
     lastSeenX*, lastSeenY*: seq[int]   ## per cog: last known enemy position
     lastSeenTick*: seq[int]
     lastSeenIndex*: seq[int]
+    lastX*, lastY*: seq[int]           ## per cog: position at the last observe
+    stuckTicks*: seq[int]              ## per cog: consecutive motionless ticks
 
 proc navCellOf*(grid: NavGrid, x, y: int): int =
   ## The flat nav cell containing a map pixel, or -1 off the grid.
@@ -64,8 +91,10 @@ proc navCentre*(grid: NavGrid, cell: int): tuple[x, y: int] =
 proc buildNavGrid*(sim: SimServer): NavGrid =
   ## A NavCell-px occupancy grid over the sim's REAL wall mask (not an
   ## observation stream): a cell is open when a cog footprint fits at its
-  ## centre. Built once per episode — the arena is fixed, and the spinning
-  ## diamonds move inside cells the grid already marks closed.
+  ## centre. Built once per episode, against the mask as it stands at build
+  ## time — a spinning diamond that later rotates into a cell this grid calls
+  ## open is handled by the stuck deflection in `compileMask`, not by rebuilding
+  ## a five-thousand-cell grid every tick.
   result.w = (MapWidth + NavCell - 1) div NavCell
   result.h = (MapHeight + NavCell - 1) div NavCell
   result.open = newSeq[bool](result.w * result.h)
@@ -138,6 +167,9 @@ proc fieldFor*(ctl: var ControlState, tick, goal: int): seq[int] =
   if ctl.fields.hasKey(goal) and
       tick - ctl.fieldTick.getOrDefault(goal, low(int) div 2) < FieldRefreshTicks:
     return ctl.fields[goal]
+  if ctl.fields.len >= MaxCachedFields and not ctl.fields.hasKey(goal):
+    ctl.fields.clear()
+    ctl.fieldTick.clear()
   let field = computeField(ctl.grid, goal)
   ctl.fields[goal] = field
   ctl.fieldTick[goal] = tick
@@ -172,6 +204,14 @@ proc navSteer*(
     let next = ny * ctl.grid.w + nx
     if not ctl.grid.open[next] or field[next] < 0:
       continue
+    if dx != 0 and dy != 0:
+      # No corner cutting: a diagonal is only taken when both of the cells it
+      # squeezes between are open. A cell is barely wider than a cog, so
+      # clipping the corner of an obstacle wedges the cog against it and it
+      # presses the same direction forever.
+      if not ctl.grid.open[cy * ctl.grid.w + nx] or
+          not ctl.grid.open[ny * ctl.grid.w + cx]:
+        continue
     if field[next] < best:
       best = field[next]
       bestCell = next
@@ -196,19 +236,40 @@ proc initControlState*(sim: SimServer): ControlState =
   result.lastSeenY = newSeq[int](MaxPlayers)
   result.lastSeenTick = newSeq[int](MaxPlayers)
   result.lastSeenIndex = newSeq[int](MaxPlayers)
+  result.lastX = newSeq[int](MaxPlayers)
+  result.lastY = newSeq[int](MaxPlayers)
+  result.stuckTicks = newSeq[int](MaxPlayers)
   for i in 0 ..< MaxPlayers:
     result.lastSeenTick[i] = low(int) div 2
     result.lastSeenIndex[i] = -1
+    result.lastX[i] = low(int) div 2
+    result.lastY[i] = low(int) div 2
 
 proc observeEnemies*(ctl: var ControlState, sim: SimServer) =
-  ## Refreshes each cog's memory of the nearest enemy it can currently see.
+  ## The control layer's ONCE-PER-TICK observation: each cog's memory of the
+  ## nearest enemy it can currently see, and whether it is making progress.
   ## Vision is the sim's own fog rule, so the control layer never knows more
   ## than the cog does.
+  ##
+  ## Both are updated here rather than in `compileMask` so that compiling a
+  ## mask stays a pure read of this state: the same (state, directive) pair
+  ## yields the same byte however many times it is asked.
   while ctl.lastSeenX.len < sim.players.len:
     ctl.lastSeenX.add(0)
     ctl.lastSeenY.add(0)
     ctl.lastSeenTick.add(low(int) div 2)
     ctl.lastSeenIndex.add(-1)
+  while ctl.lastX.len < sim.players.len:
+    ctl.lastX.add(low(int) div 2)
+    ctl.lastY.add(low(int) div 2)
+    ctl.stuckTicks.add(0)
+  for i in 0 ..< sim.players.len:
+    if sim.players[i].x == ctl.lastX[i] and sim.players[i].y == ctl.lastY[i]:
+      inc ctl.stuckTicks[i]
+    else:
+      ctl.stuckTicks[i] = 0
+    ctl.lastX[i] = sim.players[i].x
+    ctl.lastY[i] = sim.players[i].y
   for i in 0 ..< sim.players.len:
     if not sim.players[i].alive:
       continue
@@ -383,7 +444,14 @@ proc compileMask*(
   # moving as soon as everything in front of it was already its colour, and a
   # squad with no opposition covered nothing at all.
   if distSq(px, py, goal.x, goal.y) > ArriveRadius * ArriveRadius:
-    let steer = ctl.navSteer(sim.tickCount, px, py, goal.x, goal.y)
+    var steer = ctl.navSteer(sim.tickCount, px, py, goal.x, goal.y)
+    if cogIndex < ctl.stuckTicks.len and ctl.stuckTicks[cogIndex] >= StuckTicks:
+      # Wedged: steer a quarter turn clockwise instead, which slides the cog
+      # ALONG whatever it is pressed against — another cog, a diamond that has
+      # rotated into the lane, a wall the once-built field could not see. One
+      # consistent rotation makes this a wall follower, so a convex obstacle is
+      # always escaped rather than oscillated against.
+      steer = (dx: -steer.dy, dy: steer.dx)
     let
       ax = abs(steer.dx)
       ay = abs(steer.dy)

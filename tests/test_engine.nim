@@ -67,10 +67,32 @@ suite "decision engine":
     let records = engine.turn(sim, 0, 20, 0)
     let elapsed = (getMonoTime() - started).inMilliseconds.int
     check elapsed < sim.config.turnBudgetMs
-    check records.len == 0            ## a disabled client is not a fallback
+    ## And it is COUNTED: an LLM seat that cannot call the LLM is a fallback
+    ## with a named cause, which is what makes phase 60's "not all fallbacks"
+    ## check and replay_summary.py's `fallbacks` mean anything. Before this,
+    ## such a seat reported llmTurns 0 and fallbackTurns 0 — an episode of
+    ## nothing but fallbacks that counted none.
+    check records.len == 2
+    for record in records:
+      let node = parseJson(record)
+      check node["k"].getStr() == "fallback"
+      check node["cause"].getStr() == "no_credentials"
+      check node["detail"].getStr().len > 0
     for seat in 0 .. 1:
       check engine.haveDirective[seat]
+      check engine.directives[seat].source == dsFallback
       check engine.directives[seat].orders.len == sim.commandedCogs(seat).len
+
+  test "a SCRIPTED seat is never recorded as a fallback":
+    ## Certification seats both register scripted; they are playing their
+    ## policy, not degrading, so the fallback count stays honest.
+    var sim = newPaintballSim()
+    var engine = initDecisionEngine(sim)
+    check not engine.seats[0].isLlm
+    let records = engine.turn(sim, 0, 20, 0)
+    check records.len == 0
+    for seat in 0 .. 1:
+      check engine.directives[seat].source == dsScripted
 
   test "the budget guard fires and names the turn it fired on":
     var sim = newPaintballSim()
@@ -87,10 +109,18 @@ suite "decision engine":
         sawGuard = true
         check node{"turn"}.getInt() == 7
     check sawGuard
-    ## And from here on the episode plays scripted — microseconds per turn.
+    ## And from here on every remaining turn plays the holdline directive with
+    ## no network wait — recorded as a `budget_guard` fallback per seat per
+    ## turn, which is the cause the design note's enum names and the only way
+    ## the guard's cost is countable after the turn it fired on.
     let after = engine.turn(sim, 8, 20, 1)
-    check after.len == 0
-    check engine.directives[0].source == dsScripted
+    check after.len == 2
+    for record in after:
+      let node = parseJson(record)
+      check node["k"].getStr() == "fallback"
+      check node["cause"].getStr() == "budget_guard"
+      check node["turn"].getInt() == 8
+    check engine.directives[0].source == dsFallback
 
   test "the per-seat view leaks no policy identity and no enemy detail":
     var sim = newPaintballSim()

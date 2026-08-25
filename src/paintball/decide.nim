@@ -301,6 +301,23 @@ proc turn*(
     if engine.seats[seat].isLlm and not engine.llmOff and
         not engine.client.disabled:
       open.add(seat)
+    elif engine.seats[seat].isLlm:
+      # An LLM seat that CANNOT call the LLM this turn is a fallback, not a
+      # scripted policy, and the design's `fallback.cause` enum names both
+      # reasons it happens (`no_credentials`, `budget_guard`). Recording it is
+      # what makes the two countable: without this an LLM seat with no key
+      # reported llmTurns 0 AND fallbackTurns 0, and replay_summary.py's
+      # `fallbacks` was 0 for an episode in which nothing but fallbacks
+      # happened. A seat that registered as SCRIPTED is not a fallback and
+      # gets no record (which is why certification's two baseline seats write
+      # none).
+      var directive = engine.holdlineFor(sim, sim.commandedCogs(seat))
+      directive.source = dsFallback
+      engine.directives[seat] = directive
+      engine.haveDirective[seat] = true
+      let cause = if engine.llmOff: "budget_guard" else: "no_credentials"
+      result.add(fallbackRecord(game, turnIndex, seat, 1, cause,
+        "the LLM is unavailable for this turn; playing holdline"))
     else:
       var directive = engine.scriptedFor(
         sim, seat, engine.seats[seat].baseline)

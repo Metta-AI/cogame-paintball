@@ -244,6 +244,27 @@ jobs:
           SMOKE_REQUIRE_REPLAY_JSON: "0"
         run: ./tools/ci/docker_smoke.sh "${IMAGE}:ci"
 
+      # Both seats REGISTERED. A registration is one chat message sent right
+      # after connect, and joins are slot-sequential: a seat whose slot is not
+      # the next open one is not admitted yet, and the server used to drop any
+      # chat from a socket with no seat index. Round 3 of the 0.1.2 ladder lost
+      # champion #2's registration that way and the champion played the
+      # scripted baseline for the whole episode. The smoke's replay is a real
+      # episode from the real server, so the record count is the gate.
+      - name: Assert the smoke replay carries both seats' registrations
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, sys
+          data = pathlib.Path("dist/smoke/replay.json").read_bytes()
+          registers = data.count(b'{"k":"register"')
+          print(f"replay: {registers} register record(s), {len(data)} bytes")
+          if registers != 2:
+              sys.exit(f"::error::expected one register record per seat (2), "
+                       f"found {registers}: a seat's registration was dropped, "
+                       "so its squad played the scripted baseline")
+          PY
+
       # The replay this episode produced is the ONLY replay in CI that is
       # known to be a real, current-format episode of this game. wasm-viewer
       # downloads it and loads it in a browser, so the viewer is tested

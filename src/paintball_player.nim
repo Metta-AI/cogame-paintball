@@ -25,6 +25,10 @@ import
 const
   ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
   ConnectRetryMs = 500
+  RegistrationResends = 10   ## re-sends after the first, ~1 s apart.
+  ResendEveryFrames = 24     ## ~1 s of frames at 24 Hz.
+  ReconnectAttempts = 6      ## 6 x 500 ms of re-dialling after a live socket
+                             ## dies, before accepting the game is gone.
 
 proc registrationBlob(prompt, scripted, policy: string): string =
   ## The one registration message. `scripted` is JSON null when the seat is
@@ -68,46 +72,75 @@ when isMainModule:
     " baseline=", (if scripted.len > 0: scripted else: "holdline"),
     " label=", label
 
-  # The game bakes its supersampled board render caches BEFORE it opens the
-  # listener (a viewer's first-message clock starts at connect, so nothing may
-  # be accepted until every frame can be assembled instantly). The episode
-  # runner starts the players at the same instant as the game, so the first
-  # dial always lands on a closed port: RETRY, bounded, until the seat exists.
-  var
-    socket: WebSocket = nil
-    everConnected = false
-  for attempt in 0 ..< ConnectAttempts:
-    try:
-      socket = newWebSocket(url)
-      everConnected = true
-      break
-    except CatchableError as error:
-      if attempt == 0:
-        echo "paintball player: game not listening yet (", error.msg,
-          "); retrying"
-      sleep(ConnectRetryMs)
-  if not everConnected:
+  proc dial(attempts: int): WebSocket =
+    ## Bounded dialling. The game bakes its supersampled board render caches
+    ## BEFORE it opens the listener (a viewer's first-message clock starts at
+    ## connect, so nothing may be accepted until every frame can be assembled
+    ## instantly), and the episode runner starts the players at the same
+    ## instant as the game — so the first dial always lands on a closed port.
+    for attempt in 0 ..< attempts:
+      try:
+        return newWebSocket(url)
+      except CatchableError as error:
+        if attempt == 0:
+          echo "paintball player: game not listening yet (", error.msg,
+            "); retrying"
+        sleep(ConnectRetryMs)
+    nil
+
+  var socket = dial(ConnectAttempts)
+  if socket == nil:
     quit("paintball player: game never accepted a connection", 1)
   echo "paintball player: connected"
 
-  # From here the whole session is wrapped: whisky's receiveMessage RAISES on a
-  # close frame or a truncated read (only a timeout returns none), and mummy's
-  # send only QUEUES — so the game's own quit(0) can outrun the flushed frame.
-  # A naive player exits 1 on that race and fails certification intermittently
+  # Each session is wrapped: whisky's receiveMessage RAISES on a close frame or
+  # a truncated read (only a timeout returns none), and mummy's send only
+  # QUEUES — so the game's own quit(0) can outrun the flushed frame. A naive
+  # player exits 1 on that race and fails certification intermittently
   # (cogame-raid 0.1.3). Exiting 0 on a dead socket is the fix.
-  try:
-    socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
-    var resent = false
-    while true:
-      let received = socket.receiveMessage()
-      if received.isNone:
-        continue                      ## a read timeout, not a closed socket
-      if not resent:
-        # Re-send once after the first received frame, in case the first send
-        # raced the server's slot registration.
-        resent = true
-        socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
-      socket.send(readyBlob(), BinaryMessage)
-  except CatchableError as error:
-    echo "paintball player: socket closed (", error.msg, "), exiting cleanly"
+  #
+  # REGISTRATION IS RE-SENT, NOT SENT ONCE. Joins are slot-sequential, so a
+  # seat whose slot is not the next open one is not admitted until the lower
+  # slots have joined — and the lobby sends frames to a socket before it is
+  # admitted, so the first registration AND a single re-send keyed on the first
+  # received frame can both land while the seat has no index yet. The server
+  # dropped them and the champion played the scripted baseline for the whole
+  # episode (paintball round 3, 2026-08-25). The server now holds an
+  # unappliable registration, and this end keeps re-sending it for the first
+  # ~10 s of frames, which covers the lobby whichever seat connects first.
+  # Registering twice is harmless: the server just re-reads the same fields.
+  var reconnects = 0
+  while true:
+    var sessionFrames = 0
+    try:
+      socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+      var resends = 0
+      while true:
+        let received = socket.receiveMessage()
+        if received.isNone:
+          continue                    ## a read timeout, not a closed socket
+        inc sessionFrames
+        if resends < RegistrationResends and
+            sessionFrames mod ResendEveryFrames == 1:
+          inc resends
+          socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+        socket.send(readyBlob(), BinaryMessage)
+    except CatchableError as error:
+      echo "paintball player: socket closed (", error.msg, ")"
+    # NEVER exit while the game is still serving: a seat that drops keeps its
+    # cogs for the whole episode and revives on reconnect, so a dropped socket
+    # mid-episode is worth re-dialling and re-registering. Bounded on both
+    # counts — a session that never received a frame means the game is winding
+    # down (its shutdown grace still answers the route), and the re-dial is
+    # capped — so this can never outlive the game or spin: the runner waits on
+    # process exit either way.
+    if sessionFrames == 0 or reconnects >= ReconnectAttempts:
+      break
+    inc reconnects
+    echo "paintball player: re-dialling the seat (attempt ", reconnects, ")"
+    socket = dial(ReconnectAttempts)
+    if socket == nil:
+      echo "paintball player: game is no longer listening, exiting cleanly"
+      break
+    echo "paintball player: reconnected, re-registering"
   quit(0)

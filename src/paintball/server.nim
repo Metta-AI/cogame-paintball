@@ -1662,6 +1662,18 @@ proc runServerLoop*(
           )
           appState.lastAppliedMasks[websocket] = appliedMask
         if not replayLoaded:
+          # Registrations that cannot be applied YET are HELD, not dropped.
+          # Joins are strictly slot-sequential, so a seat whose slot is not the
+          # next open one waits for the lower slots — and the lobby sends
+          # frames to a socket before it has been admitted, so both the seat's
+          # first registration and the one it re-sends after its first frame
+          # can arrive while its player index is still 0x7fffffff. Clearing the
+          # table then discarded them for good and the champion played the
+          # scripted holdline baseline for the whole episode with no `register`
+          # record at all (paintball round 3, 2026-08-25: "player connected:
+          # daveey-1" first, then only "seat 0 registered" twice). Bounded by
+          # construction: one entry per live socket, dropped with the socket.
+          var heldRegistrations: seq[(WebSocket, string)] = @[]
           for websocket, chatText in appState.chatMessages.pairs:
             let playerIndex = appState.playerIndices.getOrDefault(
               websocket,
@@ -1674,11 +1686,15 @@ proc runServerLoop*(
               # `register` record — the policy label and kind only. Any other
               # chat text from a seat is dropped: cogs shout, seats do not.
               if playerIndex < 0 or playerIndex >= config.numAgents:
+                if websocket.isPlayerWebSocket() and
+                    parseRegistration(chatText).ok:
+                  heldRegistrations.add((websocket, chatText))
                 continue
               let registration = parseRegistration(chatText)
               if not registration.ok:
                 continue
               var policy = engine.seats[playerIndex]
+              let firstRegistration = not policy.registered
               policy.registered = true
               policy.prompt = registration.prompt.truncateRunes(MaxPromptRunes)
               policy.isLlm = policy.prompt.len > 0
@@ -1691,19 +1707,25 @@ proc runServerLoop*(
               if playerIndex <= sim.seatPolicyKind.high:
                 sim.seatPolicyKind[playerIndex] =
                   engine.policyKind(playerIndex)
-              replayWriter.writeChat(
-                tickTime(sim.tickCount),
-                playerIndex,
-                registerRecord(
+              # One `register` record and one log line per seat. The seat
+              # re-sends its registration for the first ~10 s of frames (see
+              # src/paintball_player.nim), so recording every copy would put
+              # ten identical records in the replay and ten identical lines in
+              # the game log.
+              if firstRegistration:
+                replayWriter.writeChat(
+                  tickTime(sim.tickCount),
                   playerIndex,
-                  teamText(sim.teamForSlot(playerIndex)),
-                  policy.label,
-                  engine.policyKind(playerIndex),
-                  $policy.baseline
+                  registerRecord(
+                    playerIndex,
+                    teamText(sim.teamForSlot(playerIndex)),
+                    policy.label,
+                    engine.policyKind(playerIndex),
+                    $policy.baseline
+                  )
                 )
-              )
-              echo "seat ", playerIndex, " registered: kind=",
-                engine.policyKind(playerIndex), " baseline=", $policy.baseline
+                echo "seat ", playerIndex, " registered: kind=",
+                  engine.policyKind(playerIndex), " baseline=", $policy.baseline
               continue
             if sim.applyShout(playerIndex, chatText):
               replayWriter.writeChat(
@@ -1712,6 +1734,8 @@ proc runServerLoop*(
                 chatText
               )
           appState.chatMessages.clear()
+          for (websocket, chatText) in heldRegistrations:
+            appState.chatMessages[websocket] = chatText
         for websocket, state in appState.globalViewers.pairs:
           globalViewers.add(websocket)
           globalStates.add(state)

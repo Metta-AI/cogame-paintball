@@ -106,6 +106,40 @@ suite "startup":
         anyGrenade = true
     check anyGrenade
 
+  test "a seat's registration is durable on both ends":
+    ## paintball round 3, 2026-08-25: champion #2 connected FIRST on slot 1.
+    ## Joins are slot-sequential, so it was not admitted until slot 0 joined —
+    ## and the lobby sends frames to an unadmitted socket, so its registration
+    ## AND the single re-send keyed on the first received frame both landed
+    ## while it had no seat index. The server dropped both (chatMessages.clear)
+    ## and the champion played the scripted holdline baseline for the whole
+    ## episode with no `register` record at all.
+    let server = readFile("src/paintball/server.nim")
+    ## The server HOLDS a registration it cannot apply yet, and re-seeds the
+    ## table after the clear.
+    check "var heldRegistrations: seq[(WebSocket, string)]" in server
+    check "heldRegistrations.add((websocket, chatText))" in server
+    let cleared = server.find("appState.chatMessages.clear()",
+      server.find("heldRegistrations.add"))
+    check cleared > 0
+    check server.find("for (websocket, chatText) in heldRegistrations",
+      cleared) > cleared
+    ## And the seat keeps re-sending through the lobby instead of once.
+    let player = readFile("src/paintball_player.nim")
+    check "RegistrationResends = 10" in player
+    check "resends < RegistrationResends" in player
+    check "sessionFrames mod ResendEveryFrames == 1" in player
+    ## It also never exits while the game is still serving: a dead socket is
+    ## re-dialled (bounded) and re-registered, and only a session that received
+    ## nothing — or an exhausted re-dial — exits, always 0.
+    check "socket = dial(ReconnectAttempts)" in player
+    check "if sessionFrames == 0 or reconnects >= ReconnectAttempts:" in player
+    ## The session loop's only exit is quit(0) (the raid 0.1.3 scar: a player
+    ## that exits 1 on a socket the game closed fails certification
+    ## intermittently). The two quit(…, 1) paths above it are startup faults —
+    ## no URL, and a game that never accepted a connection at all.
+    check player.strip().endsWith("quit(0)")
+
   test "both entrypoints are declared in the Dockerfile and the manifest":
     let dockerfile = readFile("Dockerfile")
     check "src/paintball.nim" in dockerfile

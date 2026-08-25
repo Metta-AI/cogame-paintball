@@ -1,0 +1,53 @@
+{
+  "num_agents": 2,
+  "minPlayers": 2,
+  "cogsPerTeam": 4,
+  "maxTicks": 2160,
+  "maxGames": 2,
+  "regimes": [
+    "resident",
+    "visitor"
+  ],
+  "lives": 12,
+  "hitPoints": 3,
+  "sprayDamage": 1,
+  "respawnTicks": 48,
+  "aimTurnRate": 5,
+  "visionConeDeg": 60,
+  "visionBubble": 90,
+  "mapPath": "arena",
+  "loadout": "paintball",
+  "floorPaint": true,
+  "paintBuff": true,
+  "hill": true,
+  "turnTicks": 108,
+  "turnBudgetMs": 7000,
+  "turnSpacingMs": 5000,
+  "wallClockBudgetSeconds": 690,
+  "lobbyJoinTimeoutTicks": 2400,
+  "startWaitTicks": 120,
+  "gameOverTicks": 72,
+  "fastMode": true,
+  "showPlayerLabels": false,
+  "barrageMaxPerSec": 0,
+  "tokens": [
+    "0xBADA55_0",
+    "0xBADA55_1"
+  ],
+  "players": [
+    {
+      "name": "player1"
+    },
+    {
+      "name": "player2"
+    }
+  ],
+  "slots": [
+    {
+      "team": "red"
+    },
+    {
+      "team": "blue"
+    }
+  ]
+}

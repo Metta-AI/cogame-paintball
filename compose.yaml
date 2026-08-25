@@ -1,0 +1,7 @@
+services:
+  paintball:
+    image: coworld-paintball:latest
+    platform: linux/amd64
+    build:
+      context: .
+      network: host

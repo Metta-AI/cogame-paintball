@@ -1,0 +1,35 @@
+[
+  {
+    "name": "paintball-holdcentre",
+    "run": "/bin/paintball-player",
+    "env": {
+      "PLAYER_PROMPT": "Own the hill and never give it back. Every turn, put at least two cogs on the hill:\nthe one already closest to the centre gets intent \"hold_hill\" with target the hill\ncentre, and the next closest gets \"paint_hill\" with target the hill tile nearest the\nenemy side, because that is the edge they will flip first. Keep exactly one cog on\n\"guard\" at a point about 250 pixels off the hill on YOUR side, facing the hill, so a\nflank has to go through somebody. The last cog runs \"paint_path\" between your guard\npoint and the hill, so your squad always has a fast own-colour lane to reinforce down.\nSwitch a cog to \"hunt\" only when the report shows an enemy within about 250 pixels of\nthe hill and seen this turn - chasing anything further away loses more hill time than\nthe tag is worth. If you already own the hill, do not add a third cog to it: spend the\nspare cog widening your paint around the rim so their next burst cannot flip you.\nIf they own the hill, send everyone but the guard at it with \"paint_hill\" and different\ntargets on different edges - simultaneous edges is how 80% breaks.",
+      "PLAYER_POLICY_LABEL": "holdcentre"
+    }
+  },
+  {
+    "name": "paintball-splitpaint",
+    "run": "/bin/paintball-player",
+    "env": {
+      "PLAYER_PROMPT": "Win the fight first, then the hill takes itself. Keep two cogs paired: give both\n\"hunt\" with the same target - the enemy seen most recently nearest the hill - because\ntwo sprayers on one cog tag it out in half the time and a tagged cog paints nothing for\ntwo seconds. Give one cog \"hold_hill\" at the hill centre at all times, so the clock is\nnever zero for you. Give the last cog \"paint_path\" with target the enemy's half of the\nhill, keeping your own colour under your pair's feet as they push - your pair being\n25% faster than the cogs they hunt is the whole plan.\nWhen your hold cog reports it is standing on \"enemy\" paint, promote it to \"paint_hill\"\ntargeting the hill centre and pull one of the pair back to \"hold_hill\" instead.\nWhen you own the hill and hold more seconds than they do, switch both hunters to\n\"guard\" at points about 300 pixels either side of the hill and just make them come to\nyou. Use \"fall_back\" only for a cog on 1 hit point, target your own end of the map, and\nonly until it heals on your paint.",
+      "PLAYER_POLICY_LABEL": "splitpaint"
+    },
+    "player": "ply_bac48eb1-662e-44f8-973d-f3e016dccf5d"
+  },
+  {
+    "name": "paintball-holdline",
+    "run": "/bin/paintball-player",
+    "env": {
+      "PLAYER_SCRIPTED": "holdline",
+      "PLAYER_POLICY_LABEL": "holdline"
+    }
+  },
+  {
+    "name": "paintball-sprayer",
+    "run": "/bin/paintball-player",
+    "env": {
+      "PLAYER_SCRIPTED": "sprayer",
+      "PLAYER_POLICY_LABEL": "sprayer"
+    }
+  }
+]

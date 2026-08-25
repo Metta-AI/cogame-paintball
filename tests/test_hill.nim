@@ -1,0 +1,99 @@
+## King of the Hill: the tile set, the 80% threshold, the banked clock and the
+## three end rules.
+import std/[math, unittest]
+import helpers
+
+proc fillHill(sim: var SimServer, team: Team, count: int) =
+  var placed = 0
+  for tile in sim.hillTiles:
+    if placed >= count:
+      break
+    if not sim.paintFloor[tile]:
+      continue
+    if sim.paintTile(tile, team):
+      inc placed
+
+suite "king of the hill":
+  test "the hill's floor set is big enough and symmetric about the midline":
+    let sim = newPaintballSim()
+    check sim.hillTiles.len == 25          ## the 5x5 block at the map centre
+    check sim.hillFloorTiles >= 15
+    ## Mirror symmetry: every hill floor tile's image across the vertical
+    ## midline is also a hill floor tile, which is what makes 80% team-fair.
+    for tile in sim.hillTiles:
+      if not sim.paintFloor[tile]:
+        continue
+      let
+        (cx, cy) = sim.paintTileCentre(tile)
+        mirrored = sim.paintTileAt(MapWidth - 1 - cx, cy)
+      check mirrored >= 0
+      check sim.paintFloor[mirrored]
+
+  test "ownership flips exactly at the 80% threshold and never for two teams":
+    var sim = newPaintballSim()
+    let
+      need = int(ceil(0.8 * float(sim.hillFloorTiles)))
+      justUnder = need - 1
+    sim.fillHill(Red, justUnder)
+    check not sim.hillOwnsFor(Red)
+    check not sim.hillOwnsFor(Blue)
+    sim.updateHill()
+    check not sim.hillOwned
+    sim.fillHill(Red, need)
+    check sim.hillOwnsFor(Red)
+    check not sim.hillOwnsFor(Blue)          ## 800 > 500: never both
+    sim.updateHill()
+    check sim.hillOwned
+    check sim.hillOwner == Red
+
+  test "hillTicks increments once per owned tick and not while unowned":
+    var sim = newPaintballSim()
+    sim.updateHill()
+    check sim.hillTicks[Red] == 0
+    for _ in 0 ..< 10:
+      sim.updateHill()
+    check sim.hillTicks[Red] == 0
+    check sim.hillTicks[Blue] == 0
+    sim.fillHill(Red, sim.hillFloorTiles)
+    for _ in 0 ..< 10:
+      sim.updateHill()
+    check sim.hillTicks[Red] == 10
+    check sim.hillTicks[Blue] == 0
+
+  test "a wipe credits the survivor with every remaining tick":
+    var sim = newPaintballSim(paintballConfigJson(maxTicks = 600))
+    ## Take BLUE off the board entirely: no cog alive, no lives left.
+    for i in 0 ..< sim.players.len:
+      if sim.players[i].team == Blue:
+        sim.players[i].alive = false
+        sim.players[i].lives = 0
+    let remaining = sim.config.maxTicks - sim.gameTicksElapsed()
+    sim.checkKothEnd()
+    check sim.phase == GameOver
+    check sim.endRule == EndRuleWipe
+    check sim.winner == Red
+    check sim.hillTicks[Red] == remaining
+
+  test "mercy fires on the first tick the lead exceeds the remainder":
+    var sim = newPaintballSim(paintballConfigJson(maxTicks = 600))
+    let remaining = sim.config.maxTicks - sim.gameTicksElapsed()
+    sim.hillTicks[Red] = remaining
+    sim.hillTicks[Blue] = 0
+    sim.checkKothEnd()
+    check sim.phase == Playing               ## equal, not greater: not yet
+    sim.hillTicks[Red] = remaining + 1
+    sim.checkKothEnd()
+    check sim.phase == GameOver
+    check sim.endRule == EndRuleMercy
+    check sim.winner == Red
+
+  test "equal hill ticks at the limit is a full-time draw":
+    var sim = newPaintballSim(paintballConfigJson(maxTicks = 1))
+    sim.hillTicks[Red] = 5
+    sim.hillTicks[Blue] = 5
+    while sim.gameTicksElapsed() < sim.config.maxTicks:
+      inc sim.tickCount
+    sim.checkKothEnd()
+    check sim.phase == GameOver
+    check sim.endRule == EndRuleFullTime
+    check sim.isDraw

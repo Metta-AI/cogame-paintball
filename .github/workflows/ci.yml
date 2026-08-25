@@ -380,6 +380,38 @@ jobs:
             --strict-text-bounds
 
       # -----------------------------------------------------------------
+      # THE MID-REPLAY SEEK. viewer_smoke clicks the scrubber at 0 %, 50 % and
+      # 100 % and reads #clock 700 ms after each click, but it only REPORTS
+      # those three readouts -- it fails on the load signal, the soak and the
+      # text bounds. Paintball 0.1.2 shipped a viewer whose 50 % readout was
+      # byte-identical to its 0 % one on every hosted dispatch (a scrubber
+      # click before the first chrome frame was dropped outright, and a seek
+      # past the precompute walk's keyframed prefix re-simulated thousands of
+      # ticks inside one presentation frame), which is phase-60 check 8. Assert
+      # the three readouts differ, from the JSON the smoke just wrote.
+      # -----------------------------------------------------------------
+      - name: Assert the 0%/50%/100% scrub readouts differ
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          smoke = json.load(open("viewer-smoke.json"))
+          scrub = smoke.get("scrub") or []
+          print("scrub readouts:", json.dumps(scrub, ensure_ascii=False))
+          if len(scrub) != 3:
+              sys.exit(f"::error::expected 3 scrub readouts, got {len(scrub)} "
+                       "(no #scrub in the page, or the click threw)")
+          clocks = [entry.get("clock") for entry in scrub]
+          if any(clock is None for clock in clocks):
+              sys.exit(f"::error::a scrub readout has no clock: {clocks}")
+          if len(set(clocks)) != 3:
+              sys.exit("::error::the 0%/50%/100% clock readouts are not all "
+                       f"different: {clocks} -- a seek was dropped or landed "
+                       "later than the 700 ms the harness waits")
+          print("mid-replay seek OK: three distinct readouts")
+          PY
+
+      # -----------------------------------------------------------------
       # THE WORST-CASE RENDERER FIXTURE (checklist item 15, last bullet).
       #
       # The gate above renders the docker-smoke replay, and that replay cannot

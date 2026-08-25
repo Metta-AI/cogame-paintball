@@ -148,6 +148,32 @@ suite "broadcast chrome":
     check shell.find("'data-replay-error'") < shell.find("function setMismatchTick")
     check shell.find("'data-replay-loaded'") > loaded
 
+  test "a seek is never dropped for want of a frame, and lands promptly":
+    ## The viewer-check scar (2026-08-25): on a 4 405-tick hosted replay the
+    ## 50 % scrub click produced a clock readout identical to the 0 % one.
+    ## click-to-seek needs [startTick, maxTick] off a chrome frame to map the
+    ## x-fraction onto a tick, and the inherited handler simply RETURNED when
+    ## there was no frame yet — a dropped click is invisible, because the board
+    ## is already drawn and the transport looks alive.
+    check "function seekToFraction(s, frac)" in page
+    check "SEEK_FRAC = frac; return;" in page
+    check "if (SEEK_FRAC != null && s.en)" in page
+    ## The old silent drop is gone from the click path.
+    let handler = page.find("$('scrub').addEventListener('click'")
+    check handler >= 0
+    check "if (!lastState || !lastState.en) return;" notin
+      page[handler .. handler + 600]
+    ## And the Worker applies an input on the spot instead of waiting for the
+    ## main thread's next batched advance (which is where a click's seek used
+    ## to sit for a second or more while the precompute walk ran).
+    let worker = read("replay-viewer/static_replay_worker.js")
+    check "function applyInputNow()" in worker
+    let commandBranch = worker.find("message.type === 'command'")
+    check commandBranch >= 0
+    check worker.find("applyInputNow();", commandBranch) > commandBranch
+    let shellText = read(Shell)
+    check "lastAdvanceMs > frameMs ? 1 : 6" in shellText
+
   test "the appended block routes every derived event kind the sim emits":
     ## broadcast.stepEvents derives these; a kind the page does not name falls
     ## through to the inherited chrome, which does not know it either.

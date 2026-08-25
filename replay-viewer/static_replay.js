@@ -43,6 +43,8 @@
     var accumulator = 0;
     var frameMs = 1000 / 24;
     var workerDraws = 0;
+    var advanceStarted = 0;
+    var lastAdvanceMs = 0;
     // Same shape the in-process core reports, so the page's view controls read
     // one object either way. These are the pre-stream values: fitted, whole
     // board, nothing to pan — which is exactly the state the board opens in.
@@ -121,9 +123,17 @@
       accumulator = Math.min(accumulator + Math.min(now - lastFrame, 250), 250);
       lastFrame = now;
       if (!advanceInFlight && accumulator >= frameMs) {
-        var frames = Math.min(6, Math.floor(accumulator / frameMs));
+        // A batch of six frames is a catch-up for a Worker that is keeping up.
+        // When the previous batch overran its own frame budget -- the
+        // background precompute walk on a long replay, or a seek converging --
+        // the Worker is the bottleneck, and a batch is exactly how long a
+        // click's seek then sits in the message queue. Drop to one frame per
+        // message so an input waits at most one frame.
+        var maxFrames = lastAdvanceMs > frameMs ? 1 : 6;
+        var frames = Math.min(maxFrames, Math.floor(accumulator / frameMs));
         accumulator -= frames * frameMs;
         advanceInFlight = true;
+        advanceStarted = now;
         worker.postMessage({ type: 'advance', frames: frames });
       }
       requestAnimationFrame(animate);
@@ -153,7 +163,14 @@
         } else if (message.type === 'advanced') {
           setMismatchTick(message.mismatchTick);
           advanceInFlight = false;
+          lastAdvanceMs = advanceStarted
+            ? (typeof performance !== 'undefined' ? performance.now() : Date.now()) - advanceStarted
+            : 0;
           if (typeof message.draws === 'number') workerDraws = message.draws;
+        } else if (message.type === 'inputApplied') {
+          // One frame the Worker ran on its own to apply a viewer input
+          // promptly. Nothing to reschedule -- the rAF loop owns pacing.
+          setMismatchTick(message.mismatchTick);
         } else if (message.type === 'error') {
           showFailure(new Error(message.message || 'Replay Worker failed'));
           stop();

@@ -1732,6 +1732,13 @@ body[data-embed] #board { top: 0; height: 100%; }
     if (seekRaw != null && /^\d+$/.test(seekRaw)) SEEK_T = parseInt(seekRaw, 10);
   } catch (e) {}
 
+  // A scrubber click that arrives before the first chrome frame used to be
+  // DROPPED: click-to-seek needs [startTick, maxTick] off the frame to map the
+  // x-fraction onto a tick, and the handler simply returned when there was no
+  // frame yet. The fraction is remembered instead and resolved on the first
+  // frame that carries the axis -- the same one-shot shape as ?t= above.
+  var SEEK_FRAC = null;
+
   // Achievement deep-link (?achievement=<id>): a badge's watch link. The lead
   // chrome frame carries the final game's earned badges with their focus cogs
   // (s.ach: [{id, s, n}]); when it arrives, select the receiving cog's POV via
@@ -1853,6 +1860,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     dismissLockerRoom();  // the board is live — fade the pre-load curtain
 
     if (SEEK_T != null) { send('s:' + SEEK_T); SEEK_T = null; }
+    if (SEEK_FRAC != null && s.en) { seekToFraction(s, SEEK_FRAC); SEEK_FRAC = null; }
     applyAchievementFocus(s);
 
     // The board's real native size, read off the core's letterbox transform.
@@ -3651,16 +3659,25 @@ body[data-embed] #board { top: 0; height: 100%; }
   $('btn-loop').addEventListener('click', function () { send('r'); });
   $('btn-skip').addEventListener('click', function () { send('f'); });
 
+  // Map an x-fraction of the scrubber onto the shown [startTick, maxTick] axis
+  // and seek there. One place, shared by a live click and by a click that had
+  // to wait for the first frame.
+  function seekToFraction(s, frac) {
+    var st = Math.max(0, s.st || 0);
+    var mx = Math.max(st + 1, s.mx || 1);
+    send('s:' + (st + Math.round(frac * (mx - st))));
+  }
+
   // click-to-seek: map x-fraction to a tick and send s:<tick>
   $('scrub').addEventListener('click', function (ev) {
-    if (!lastState || !lastState.en) return;
     var rect = this.getBoundingClientRect();
     var frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
-    // Map the click back onto the shown [startTick, maxTick] axis.
-    var st = Math.max(0, lastState.st || 0);
-    var mx = Math.max(st + 1, lastState.mx || 1);
-    var tick = st + Math.round(frac * (mx - st));
-    send('s:' + tick);
+    // The axis lives on the frame, so a click before the first frame cannot be
+    // mapped yet -- QUEUE it (onFrame flushes SEEK_FRAC) rather than dropping
+    // it. A dropped first click is invisible: the board is already drawn, the
+    // transport looks alive, and the viewer just does not move.
+    if (!lastState || !lastState.en) { SEEK_FRAC = frac; return; }
+    seekToFraction(lastState, frac);
   });
 
   // pov clear (togglePov lives in the shared chrome, driven via ctx.sendPov)

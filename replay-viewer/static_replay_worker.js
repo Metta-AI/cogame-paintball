@@ -134,6 +134,28 @@ async function start() {
   }
 }
 
+function applyInputNow() {
+  // A viewer input (transport command, scrubber seek, board click) only takes
+  // effect at the top of the next presentation frame, and the main thread only
+  // asks for one on its next rAF -- behind whatever advance batch is already
+  // queued. On a long replay that made a mid-replay seek arrive seconds after
+  // the click (the hosted 50 % scrub read identically to 0 %). Run ONE frame
+  // right here instead, so the input is applied and drawn as soon as the
+  // message is processed. `advanced` is not posted: the main thread's
+  // advance-in-flight bookkeeping is not ours to touch.
+  if (!runtimeLoaded || failed || disposed) return;
+  try {
+    if (Module._paintball_frame() < 0) throw new Error(runtimeError());
+    ingestPacket();
+    postMessage({
+      type: 'inputApplied',
+      mismatchTick: Module._paintball_mismatch_tick()
+    });
+  } catch (error) {
+    reportFailure(error);
+  }
+}
+
 function advance(frames) {
   if (!runtimeLoaded || failed || disposed) return;
   try {
@@ -179,10 +201,13 @@ self.onmessage = function (event) {
       advance(message.frames);
     } else if (message.type === 'command' && core) {
       core.sendCommand(message.text || '');
+      applyInputNow();
     } else if (message.type === 'click' && core) {
       core.clickMap(Number(message.x) || 0, Number(message.y) || 0);
+      applyInputNow();
     } else if (message.type === 'input' && runtimeLoaded) {
       sendRuntimeInput(new Uint8Array(message.bytes));
+      applyInputNow();
     } else if (message.type === 'resize' && core) {
       core.setViewportSize(message.width, message.height, message.dpr);
     } else if (message.type === 'view' && core) {

@@ -319,6 +319,51 @@ suite "replay":
     check sim.gameHill.len == Games
     check sim.gameRegimes == @[regimeResident, regimeVisitor]
 
+  test "a seek past the keyframed prefix converges in bounded slices":
+    ## The viewer-check scar (2026-08-25): the hosted 50 % scrub read
+    ## identically to the 0 % one. A seek lands on the newest keyframe at or
+    ## before its target and RE-SIMULATES the gap, and while the precompute
+    ## walk is still running the keyframes only cover its prefix — so the
+    ## 50 % click on a 4 405-tick replay asked one presentation frame to
+    ## re-simulate ~2 000 ticks. Two properties are pinned here: the seek
+    ## MOVES on the first frame (the readout changes), and no single frame
+    ## walks more than SeekTicksPerFrame ticks.
+    let data = parseReplayBytes(readFile(path))
+    var runtime = initReplayRuntime(data, mismatchQuit = true,
+      gameEventLoggingEnabled = false)
+    var player = runtime.player
+    var sim = runtime.sim
+    ## The hosted state: the walk has only keyframed a short prefix.
+    check not player.scanComplete
+    let
+      startTick = sim.tickCount
+      target = player.replayMaxTick() - 1
+    player.applyReplaySeek(sim, target)
+    check not player.playing                       ## a seek pauses
+    check player.pendingSeekTick == target
+    let noop = proc () = discard
+    var frames = 0
+    var maxStep = 0
+    while player.pendingSeekTick >= 0 and frames < 1000:
+      let before = sim.tickCount
+      player.advanceReplayPlayback(sim, noop, noop)
+      maxStep = max(maxStep, sim.tickCount - before)
+      inc frames
+      if frames == 1:
+        ## The FIRST frame after the click already moved the clock — which is
+        ## the whole point: a viewer probe 700 ms later reads a new tick.
+        check sim.tickCount != startTick
+    echo "seek from ", startTick, " to ", target, " converged in ", frames,
+      " frames, largest single-frame walk ", maxStep, " ticks"
+    check frames >= 1
+    check maxStep <= SeekTicksPerFrame
+    ## A gap wider than one slice must take more than one frame — that is the
+    ## bound doing its job rather than the fixture being short.
+    if target - startTick > SeekTicksPerFrame:
+      check frames > 1
+    check sim.tickCount == target
+    check player.pendingSeekTick == -1
+
   test "the momentum series is the HILL-TICK difference, not lives":
     ## The starter graphed lives here. With `lives: 12` per cog that series is
     ## near-flat over a paintball episode and shows tag attrition, so the

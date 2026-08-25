@@ -58,6 +58,17 @@ type
       ## Real-time frames left to HOLD on the final game-over frame before a
       ## looping replay restarts, so the end segment (winner, win condition,
       ## stats) is readable instead of flashing for one frame. 0 = not holding.
+    pendingSeekTick*: int
+      ## A seek still converging, or -1. A seek lands on the newest keyframe
+      ## at or before its target and then RE-SIMULATES the gap, and while the
+      ## precompute walk is still running the keyframes only cover its
+      ## prefix — on a 4 405-tick hosted replay the 50 % scrub had ~2 000
+      ## ticks of gap and re-simulated all of them inside ONE presentation
+      ## frame, so the viewer showed nothing for seconds and the
+      ## viewer-check's 50 % clock probe read identically to its 0 % probe.
+      ## The gap is now walked SeekTicksPerFrame at a time (like the
+      ## precompute scan), so the first frame after a click already moves and
+      ## no frame stalls.
     skipLulls*: bool
       ## When on, playback fast-forwards through the lull spans below. ON for
       ## every replay `initReplayPlayer` builds: a spectator's default watch
@@ -123,6 +134,10 @@ const
     ## Speed multiplier applied inside a lull span.
   MaxLullTicksPerFrame* = 64
     ## Per-frame cap on boosted stepping so the server stays responsive.
+  SeekTicksPerFrame* = 240
+    ## Per-frame cap on the re-simulation a SEEK may do (10 s of sim time).
+    ## A seek past the keyframed prefix converges over this many ticks per
+    ## presentation frame instead of blocking one frame for the whole gap.
   PaintballReplayMagic = "COWLDPNT"
   PaintballReplayFormatVersion = 1'u16
   PaintballReplaySpec = ReplaySpec(
@@ -236,6 +251,7 @@ proc initReplayPlayer*(data: ReplayData): ReplayPlayer =
   result.speedIndex = 0
   result.skipLulls = true
   result.hashMismatchTick = -1
+  result.pendingSeekTick = -1
 
 proc replaySpeed*(replay: ReplayPlayer): int =
   ## Returns the current integer replay speed.
@@ -714,14 +730,60 @@ proc seekReplay*(replay: var ReplayPlayer, sim: var SimServer, tick: int) =
   while sim.tickCount < tick and replay.hashIndex < replay.data.hashes.len:
     replay.stepReplay(sim)
 
+proc convergeSeek*(
+  replay: var ReplayPlayer,
+  sim: var SimServer
+): bool =
+  ## Walks a pending seek up to SeekTicksPerFrame ticks closer to its target.
+  ## Returns true when it moved the sim, so the caller can resync its
+  ## broadcast tracker. Clears the pending seek once the target (or the end of
+  ## the recording) is reached.
+  if replay.pendingSeekTick < 0:
+    return false
+  var stepped = 0
+  while sim.tickCount < replay.pendingSeekTick and
+      replay.hashIndex < replay.data.hashes.len and
+      stepped < SeekTicksPerFrame:
+    replay.stepReplay(sim)
+    inc stepped
+  if sim.tickCount >= replay.pendingSeekTick or
+      replay.hashIndex >= replay.data.hashes.len:
+    replay.pendingSeekTick = -1
+  stepped > 0
+
+proc beginSeek*(
+  replay: var ReplayPlayer,
+  sim: var SimServer,
+  tick: int
+) =
+  ## Starts a BOUNDED seek: land on the newest keyframe at or before `tick`
+  ## (instant) and record the target. Convergence happens SeekTicksPerFrame
+  ## at a time from advanceReplayPlayback — which every host calls in the same
+  ## frame — so a seek inside the keyframed region still lands on this frame
+  ## while a seek past the precompute walk's prefix costs one bounded slice
+  ## per frame instead of stalling the viewer. The keyframe restore alone
+  ## already moves the clock, which is what makes a scrubber click visible in
+  ## the very next frame. Call convergeSeek in a loop for a synchronous seek.
+  let target = clamp(tick, replay.replayStartTick(), replay.replayMaxTick())
+  if replay.keyframes.len > 0:
+    replay.restoreReplayKeyframe(
+      sim, replay.keyframes[replay.replayKeyframeIndex(target)])
+  else:
+    let gameEventLoggingEnabled = sim.gameEventLoggingEnabled
+    sim = initSimServer(sim.config)
+    sim.gameEventLoggingEnabled = gameEventLoggingEnabled
+    replay.resetReplay()
+  replay.pendingSeekTick = target
+
 proc applyReplaySeek*(
   replay: var ReplayPlayer,
   sim: var SimServer,
   tick: int
 ) =
-  ## Seeks replay playback and pauses on the target tick.
+  ## Seeks replay playback and pauses on the target tick. The seek itself is
+  ## bounded per frame (beginSeek); playback stays paused while it converges.
   replay.playing = false
-  replay.seekReplay(sim, clamp(tick, replay.replayStartTick(), replay.replayMaxTick()))
+  replay.beginSeek(sim, tick)
 
 proc applySpeedCommand*(speedIndex: var int, command: char) =
   ## Applies one live playback speed command.
@@ -762,20 +824,21 @@ proc applyReplayCommand*(
     applySpeedCommand(replay.speedIndex, command)
   of ',', '<':
     replay.playing = false
+    replay.pendingSeekTick = -1
     replay.seekReplay(sim, replay.replayStartTick())
   of 'b':
     replay.playing = false
-    replay.seekReplay(sim, max(replay.replayStartTick(), sim.tickCount - 1))
+    replay.beginSeek(sim, max(replay.replayStartTick(), sim.tickCount - 1))
   of 'e':
     replay.playing = false
-    replay.seekReplay(sim, replay.replayMaxTick())
+    replay.beginSeek(sim, replay.replayMaxTick())
   of 'r':
     replay.looping = not replay.looping
   of 'f':
     replay.skipLulls = not replay.skipLulls
   of '.', '>':
     replay.playing = false
-    replay.seekReplay(sim, sim.tickCount + ReplayFps * 5)
+    replay.beginSeek(sim, sim.tickCount + ReplayFps * 5)
   else:
     discard
 
@@ -808,6 +871,15 @@ proc advanceReplayPlayback*(
   ## end segment: winner, win condition, stats) holds for
   ## ReplayEndHoldSeconds of real time first. A play command during the hold
   ## skips the wait and loops immediately.
+  # A seek the viewer asked for OWNS the frame. Converging it takes priority
+  # over the background precompute walk (a scan slice plus a seek slice in one
+  # frame is what made the hosted 50 % scrub read stale) and over playback:
+  # the seek is paused by definition, and the next frame either converges
+  # further or resumes.
+  if replay.pendingSeekTick >= 0:
+    if replay.convergeSeek(sim):
+      onJump()
+    return
   # Advance the background precompute walk a bounded slice per frame (no-op
   # once complete). Runs while paused too: a paused frame has budget to
   # spare, and finishing the walk is what unlocks the momentum graph, beat

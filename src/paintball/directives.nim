@@ -39,6 +39,10 @@ type
     hasFace*: bool
     faceX*, faceY*: int
     say*: string               ## <= MaxSayRunes, sanitized; becomes a SHOUT.
+    fromReply*: bool           ## a reply entry really named this cog. False
+                               ## means the parser filled it in, and the
+                               ## caller repairs it from last turn's directive
+                               ## (else holdline's) — never from a default.
 
   DirectiveSource* = enum
     dsLlm = "llm"
@@ -259,6 +263,7 @@ proc parseSquadDirective*(
       slot = byPosition
     claimed[slot] = true
     inc matched
+    orders[slot].fromReply = true
     let node = entry.node
     orders[slot].intent = parseIntent(node{"intent"}.getStr())
     let target = readPoint(node{"target"}, defaultX, defaultY, maxX, maxY)

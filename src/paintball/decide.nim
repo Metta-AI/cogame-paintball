@@ -266,6 +266,41 @@ proc holdlineFor*(
   ## the scripted teammates of a `visitor` game as well as for the fallback.
   scriptedDirective(engine.ctl, sim, blHoldline, cogs)
 
+proc repairMissingOrders*(
+  engine: DecisionEngine, sim: SimServer, seat: int,
+  directive: var SquadDirective
+) =
+  ## Design §Reply schema, the `cogs` row: "extra entries dropped; a missing
+  ## cog keeps LAST turn's directive, else `holdline`'s". The parser fills an
+  ## unnamed cog with `paint_hill` at the hill centre so no cog is ever left
+  ## unactuated; that default is a floor, not the rule — a commander who names
+  ## three of four cogs meant the fourth to carry on, not to abandon its guard
+  ## post and walk to the middle.
+  var previous: seq[CogOrder]
+  if seat < engine.haveDirective.len and engine.haveDirective[seat]:
+    previous = engine.directives[seat].orders
+  var
+    holdline: SquadDirective
+    builtHoldline = false
+  for order in directive.orders.mitems:
+    if order.fromReply:
+      continue
+    var repaired = false
+    for old in previous:
+      if old.cogIndex == order.cogIndex:
+        order = old                  ## last turn's directive for this cog
+        repaired = true
+        break
+    if repaired:
+      continue
+    if not builtHoldline:
+      holdline = engine.holdlineFor(sim, sim.commandedCogs(seat))
+      builtHoldline = true
+    for fallback in holdline.orders:
+      if fallback.cogIndex == order.cogIndex:
+        order = fallback             ## else holdline's
+        break
+
 proc turn*(
   engine: var DecisionEngine,
   sim: SimServer,
@@ -386,6 +421,7 @@ proc turn*(
           hill.x, hill.y, MapWidth - 1, MapHeight - 1)
         directive.source = dsLlm
         directive.latencyMs = latency
+        engine.repairMissingOrders(sim, seat, directive)
         engine.directives[seat] = directive
         engine.haveDirective[seat] = true
       except CatchableError as error:

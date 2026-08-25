@@ -162,3 +162,71 @@ Hope that helps."""
       raised = error.msg
     check validateUtf8(raised) == -1
     check parseJson($(%*{"detail": raised}))["detail"].getStr() == raised
+
+  test "a cog the reply did not name keeps last turn's order, else holdline's":
+    ## Design §Reply schema, the `cogs` row. The parser's `paint_hill` at the
+    ## hill centre is a floor that keeps every cog actuated, not the rule: a
+    ## commander who names three of four cogs meant the fourth to carry on.
+    var sim = newPaintballSim()
+    var engine = initDecisionEngine(sim)
+    engine.seats[0].isLlm = true
+    let commanded = sim.commandedCogs(0)
+    var ids: seq[string]
+    for cogIndex in commanded:
+      ids.add(sim.cogAlias(cogIndex))
+
+    ## Turn 1: the commander names every cog, and parks one on `guard`.
+    var first = parseSquadDirective(extractJsonObject(
+      """{"note":"dig in","cogs":[
+        {"id":"""" & ids[0] & """","intent":"hold_hill","target":[617,329]},
+        {"id":"""" & ids[1] & """","intent":"guard","target":[400,300]},
+        {"id":"""" & ids[2] & """","intent":"paint_hill","target":[600,300]},
+        {"id":"""" & ids[3] & """","intent":"paint_path","target":[700,300]}]}"""),
+      ids, commanded, 617, 329, MaxX, MaxY)
+    for order in first.orders:
+      check order.fromReply
+    engine.repairMissingOrders(sim, 0, first)
+    engine.directives[0] = first
+    engine.haveDirective[0] = true
+
+    ## Turn 2: the same commander names only the first cog. The guard keeps
+    ## guarding its own point instead of walking to the hill centre.
+    var second = parseSquadDirective(extractJsonObject(
+      """{"note":"hold","cogs":[{"id":"""" & ids[0] &
+      """","intent":"hunt","target":[500,400]}]}"""),
+      ids, commanded, 617, 329, MaxX, MaxY)
+    check second.orders[0].fromReply
+    check not second.orders[1].fromReply
+    engine.repairMissingOrders(sim, 0, second)
+    check second.orders[0].intent == intHunt
+    check second.orders[1].intent == intGuard
+    check second.orders[1].targetX == 400
+    check second.orders[1].targetY == 300
+    check second.orders[2].intent == intPaintHill
+    check second.orders[3].intent == intPaintPath
+    ## Every order still names its own cog, so nothing is left unactuated.
+    for i, order in second.orders:
+      check order.cogIndex == commanded[i]
+      check order.id == sim.cogAlias(commanded[i])
+
+    ## With NO history, an unnamed cog gets holdline's order for it — not the
+    ## parser's default. holdline puts its nearest cog on the hill and its
+    ## furthest on guard, so at least one unnamed cog is not `paint_hill`.
+    var fresh = initDecisionEngine(sim)
+    var third = parseSquadDirective(extractJsonObject(
+      """{"note":"go","cogs":[{"id":"""" & ids[0] &
+      """","intent":"hunt","target":[500,400]}]}"""),
+      ids, commanded, 617, 329, MaxX, MaxY)
+    fresh.repairMissingOrders(sim, 0, third)
+    let holdline = fresh.holdlineFor(sim, commanded)
+    for order in third.orders:
+      if order.cogIndex == commanded[0]:
+        continue
+      var found = false
+      for reference in holdline.orders:
+        if reference.cogIndex == order.cogIndex:
+          found = true
+          check order.intent == reference.intent
+          check order.targetX == reference.targetX
+          check order.targetY == reference.targetY
+      check found

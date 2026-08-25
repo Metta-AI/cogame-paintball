@@ -12,6 +12,13 @@
     if (failed) return;
     failed = true;
     console.error(error);
+    // The failure marker, on <html>, next to data-replay-loaded: without it a
+    // deadlocked bundle is indistinguishable from a slow one, and every
+    // failure mode below degrades to the harness's timeout instead of an
+    // immediate named failure (tools/ci/viewer_smoke.mjs reads this attribute
+    // and fails fast on it).
+    document.documentElement.setAttribute(
+      'data-replay-error', error && error.message ? error.message : String(error));
     var status = document.getElementById('status');
     if (status) {
       status.textContent = 'Replay failed: ' + (error.message || String(error));

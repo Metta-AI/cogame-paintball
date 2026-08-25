@@ -13,6 +13,7 @@ const
   Page = "client/replay_broadcast.html"
   Chrome = "client/chrome_common.js"
   Core = "client/broadcast_core.js"
+  Shell = "replay-viewer/static_replay.js"
 
 proc read(path: string): string = readFile(path)
 
@@ -128,6 +129,24 @@ suite "broadcast chrome":
       if "PAINTBALL_WIRE" in line:
         inc occurrences
     check occurrences == 1
+
+  test "the shell sets BOTH load and failure markers on <html>":
+    ## data-replay-loaded is set from the Worker's 'loaded' message, which is
+    ## posted only after the first frame has been drawn; data-replay-error is
+    ## set by showFailure, which every failure path funnels through. Without
+    ## the second marker a deadlocked bundle looks exactly like a slow one:
+    ## tools/ci/viewer_smoke.mjs reads the attribute and fails fast on it,
+    ## instead of waiting out its timeout.
+    let shell = read(Shell)
+    check "'data-replay-error'" in shell
+    check "'data-replay-loaded', 'true'" in shell
+    ## Both from the shell's OWN code, in the two branches that mean it.
+    let failure = shell.find("function showFailure")
+    let loaded = shell.find("message.type === 'loaded'")
+    check failure >= 0 and loaded >= 0
+    check shell.find("'data-replay-error'") > failure
+    check shell.find("'data-replay-error'") < shell.find("function setMismatchTick")
+    check shell.find("'data-replay-loaded'") > loaded
 
   test "no ctf_ / CTF_ identifier survives in client/, replay-viewer/ or src/":
     ## chrome_common.js is the ONE documented exception: the pin says it is

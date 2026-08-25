@@ -21,7 +21,7 @@
   "paintBuff": true,
   "hill": true,
   "turnTicks": 108,
-  "turnBudgetMs": 7000,
+  "turnBudgetMs": 10000,
   "turnSpacingMs": 5000,
   "wallClockBudgetSeconds": 690,
   "lobbyJoinTimeoutTicks": 2400,

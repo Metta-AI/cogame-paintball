@@ -156,6 +156,36 @@ suite "coworld manifest":
       let budget = variant["game_config"]["wallClockBudgetSeconds"].getInt()
       check budget <= EpisodeTimeoutSeconds * 6 div 10
 
+  test "each variant's worst-case wall clock fits inside its own stop":
+    ## The v1.1 timing amendment's arithmetic, recomputed per variant instead
+    ## of asserted once in prose. A turn that blows BOTH deadlines costs
+    ## attempt1Ms + retryMs; the spacing floor cannot add to that turn (it
+    ## floors the START of consecutive batches, and a 9 s turn is already past
+    ## the 5 s floor). Everything else is the note's cap column: the lobby
+    ## join cap, wall-paced play, and the game-over/results/replay tail.
+    let defaults = defaultGameConfig()
+    check defaults.attempt1Ms + defaults.retryMs == 9000
+    const
+      LobbyCapSeconds = 100        ## 2400 lobby ticks at 24 Hz
+      PlayCapSeconds = 180         ## 2 x 2160 ticks, wall-paced worst case
+      TailSeconds = 20             ## game-over holds + results + replay write
+    for variant in manifest["variants"]:
+      let
+        cfg = variant["game_config"]
+        turnsPerGame = cfg["maxTicks"].getInt() div cfg["turnTicks"].getInt()
+        turns = turnsPerGame * cfg["maxGames"].getInt()
+        worstTurnMs = max(
+          defaults.attempt1Ms + defaults.retryMs, cfg["turnSpacingMs"].getInt())
+        worstSeconds = turns * worstTurnMs div 1000 +
+          LobbyCapSeconds + PlayCapSeconds + TailSeconds
+      check turns <= 40
+      check worstTurnMs <= cfg["turnBudgetMs"].getInt()
+      echo variant["id"].getStr(), ": ", turns, " turns, worst case ",
+        worstSeconds, " s vs stop ",
+        cfg["wallClockBudgetSeconds"].getInt(), " s"
+      check worstSeconds <= cfg["wallClockBudgetSeconds"].getInt()
+      check worstSeconds <= EpisodeTimeoutSeconds * 6 div 10
+
   test "the compose service and image agree with the manifest placeholder":
     ## Manifest image placeholders are DERIVED from compose service names
     ## (lantern 0.1.0), so a mismatch fails `coworld build` outright.

@@ -29,16 +29,32 @@ suite "decision engine":
     var config = defaultGameConfig()
     config.update(paintballConfigJson())
     check config.attempt1Ms + config.retryMs <= config.turnBudgetMs
-    ## curly's timeout granularity is whole seconds, and decide.turn FLOORS
-    ## the conversion, so the transport deadline is never longer than the
-    ## configured one. What has to hold is the note's worst case — a turn that
-    ## times out twice — with margin inside the per-turn cap, not merely
-    ## equal to it: 4 + 2 = 6 s <= 6.5 s <= 7.0 s.
-    let rounded = max(1, config.attempt1Ms div 1000) +
-      max(1, config.retryMs div 1000)
-    check rounded * 1000 <= config.attempt1Ms + config.retryMs
-    check rounded * 1000 <= 6500
-    check rounded * 1000 < config.turnBudgetMs
+    ## v1.1 timing amendment. curly's transport timeout is CURLOPT_TIMEOUT —
+    ## whole seconds — and decide.turn FLOORS the conversion, so a sub-second
+    ## deadline is not the deadline it claims to be: 0.1.2's `attempt1Ms:
+    ## 4500` really ran with 4 s, against a hosted sidecar whose median call
+    ## measured 4618 ms (56 of 85 calls past 4 s), and every successful LLM
+    ## directive reported a 3999-4001 ms latency. Both deadlines are therefore
+    ## whole seconds, and the EFFECTIVE value must equal the configured one.
+    let
+      effectiveAttempt1 = max(1, config.attempt1Ms div 1000) * 1000
+      effectiveRetry = max(1, config.retryMs div 1000) * 1000
+    check effectiveAttempt1 == config.attempt1Ms
+    check effectiveRetry == config.retryMs
+    check effectiveAttempt1 == 6000              ## 6 s, not 4 s
+    check effectiveRetry == 3000
+    ## Attempt 1 clears the measured sidecar median with margin.
+    const MeasuredSidecarMedianMs = 4618
+    check effectiveAttempt1 >= MeasuredSidecarMedianMs + 1000
+    ## And the worst case — a turn that blows both deadlines — still fits
+    ## inside the per-turn cap with room to spare.
+    check effectiveAttempt1 + effectiveRetry == 9000
+    check effectiveAttempt1 + effectiveRetry < config.turnBudgetMs
+    ## The whole-second rule is enforced by the config validator, not just by
+    ## the shipped defaults.
+    var floored = defaultGameConfig()
+    expect PaintballError:
+      floored.update($(%*{"attempt1Ms": 4500}))
 
   test "turnSpacingMs holds two seats under the sidecar's 30/min cap":
     var config = defaultGameConfig()

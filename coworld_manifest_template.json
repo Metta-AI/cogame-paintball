@@ -153,15 +153,18 @@
         },
         "turnBudgetMs": {
           "type": "integer",
-          "default": 7000
+          "default": 10000,
+          "description": "Monotonic cap on one whole decision turn."
         },
         "attempt1Ms": {
           "type": "integer",
-          "default": 4500
+          "default": 6000,
+          "description": "First parallel batch deadline; whole seconds only."
         },
         "retryMs": {
           "type": "integer",
-          "default": 2000
+          "default": 3000,
+          "description": "Single retry batch deadline; whole seconds only."
         },
         "turnSpacingMs": {
           "type": "integer",
@@ -554,7 +557,7 @@
         "sprayDamage": 1,
         "respawnTicks": 48,
         "turnTicks": 108,
-        "turnBudgetMs": 7000,
+        "turnBudgetMs": 10000,
         "turnSpacingMs": 5000,
         "wallClockBudgetSeconds": 690,
         "lobbyJoinTimeoutTicks": 2400,
@@ -603,7 +606,7 @@
         "sprayDamage": 1,
         "respawnTicks": 48,
         "turnTicks": 108,
-        "turnBudgetMs": 7000,
+        "turnBudgetMs": 10000,
         "turnSpacingMs": 5000,
         "wallClockBudgetSeconds": 690,
         "lobbyJoinTimeoutTicks": 2400,
@@ -651,7 +654,7 @@
         "sprayDamage": 1,
         "respawnTicks": 48,
         "turnTicks": 108,
-        "turnBudgetMs": 7000,
+        "turnBudgetMs": 10000,
         "turnSpacingMs": 5000,
         "wallClockBudgetSeconds": 690,
         "lobbyJoinTimeoutTicks": 2400,
@@ -699,7 +702,7 @@
         "sprayDamage": 1,
         "respawnTicks": 48,
         "turnTicks": 108,
-        "turnBudgetMs": 7000,
+        "turnBudgetMs": 10000,
         "turnSpacingMs": 5000,
         "wallClockBudgetSeconds": 690,
         "lobbyJoinTimeoutTicks": 2400,
@@ -754,7 +757,7 @@
       "sprayDamage": 1,
       "respawnTicks": 48,
       "turnTicks": 108,
-      "turnBudgetMs": 7000,
+      "turnBudgetMs": 10000,
       "turnSpacingMs": 0,
       "wallClockBudgetSeconds": 180,
       "lobbyJoinTimeoutTicks": 1440,

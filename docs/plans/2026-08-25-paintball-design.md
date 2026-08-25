@@ -421,6 +421,10 @@ platform kill (episodeTimeoutSeconds)                        = 1200 s
 720 s is 60 % of the assumed 1200 s `episodeTimeoutSeconds`; every shipped variant's
 `wallClockBudgetSeconds` is ≤ 690 and a manifest test asserts it.
 
+> **Superseded by the v1.1 timing amendment (2026-08-25, below).** The deadlines above shipped in
+> 0.1.2 and were measured in production: they are now 6 s / 3 s inside a 10 s per-turn cap. Read the
+> amendment for the numbers the code and the manifest carry.
+
 `fastMode: true` in every variant. ctf's `docs/PROTOCOL.md` warns that the Sprite v1 Ready packet
 (`0x85`) corrupts input timing on a wall-clock-paced server — that warning is about *player* clients
 whose own inputs are dead-reckoned. Paintball's seats send no inputs at all (the server computes
@@ -1345,3 +1349,88 @@ Beyond the Nim suite, `ci.yml` runs:
 - **Campaign mode.** ctf's territory-campaign integration is a platform-side feature and is not wired
   up for paintball in v1.
 - **Audio, 3D, camera cuts, and any downloaded art asset.**
+
+---
+
+## v1.1 timing amendment (2026-08-25, after the 0.1.2 ladder)
+
+Four rounds of the hosted ladder measured this coworld's own numbers, and two of the choices above
+were wrong. Nothing else in the note changes: same cadence (108 ticks, 20 turns a game, 40 an
+episode), same one-parallel-batch-per-turn shape, same 5 s rate floor, same 690 s engine stop, same
+budget guard.
+
+**1. The candidate list is haiku only.** §Credentials listed
+`us.anthropic.claude-sonnet-4-5-20250929-v1:0` as the second Bedrock candidate. Round 2's game log
+called it **133 times and every call returned "Timeout was reached"** — zero successes. A single
+haiku 429 (a platform-wide daily-token cap that day) therefore cost the whole episode, because each
+seat's one retry went to a model that never answers. `bedrockModelIds()` now returns one id;
+`BEDROCK_MODEL` still pins any model for a debugging run. When the only candidate answers 429 the
+turn **fails fast**: no retry, the seat plays the scripted `holdline` directive for that turn, and
+the `fallback` record's `cause` is the new value **`throttled`** (the enum in §Degrade, never hang
+is now `{timeout, parse_error, transport_error, throttled, no_credentials, budget_guard}` — 0.1.2
+filed every 429 as `parse_error`, which is what made 205 log lines unreadable).
+
+**2. The deadlines are whole seconds, clear of this coworld's own sidecar median.** curly passes its
+timeout to `CURLOPT_TIMEOUT`, whose granularity is **whole seconds**, and the turn loop floors the
+conversion — so `attempt1Ms: 4500` really ran with **4 s**. Paintball's prompt is ~4 000 tokens in
+and up to 900 out, and its sidecar measured a **4 618 ms median over 85 hosted calls (56 of them
+past 4 s)**. Every successful LLM directive in 0.1.2 reported a latency of **3999–4001 ms**: the
+deadline was answering, not the model. New values, all whole seconds and validated as such by
+`sim_config` (a sub-second deadline is now a config error, not a silent floor):
+
+| field | 0.1.2 | v1.1 | effective |
+|---|---|---|---|
+| `attempt1Ms` | 4500 | **6000** | 6 s (was 4 s) |
+| `retryMs` | 2000 | **3000** | 3 s (was 2 s) |
+| `turnBudgetMs` | 7000 | **10000** | monotonic cap on the whole turn |
+| `turnSpacingMs` | 5000 | 5000 | unchanged — 2 seats / 5 s = 24 req/min |
+| `wallClockBudgetSeconds` | 690 | 690 | unchanged |
+
+Worst case per turn is 6 + 3 = **9 s**, inside the 10 s cap with 1 s to spare for the parse, the
+record write and the install. The wall-clock arithmetic, redone:
+
+```
+expected
+  40 turns x 5.0 s spacing floor (a healthy 4.6 s call fits INSIDE the floor)   = 200 s
+  lobby / connect wait (typical)                                               =  15 s
+  2 x 2160 ticks of play, fastMode, seats report ready                         =  25 s
+  game-over holds + results + replay write (retrying uploader)                 =  20 s
+                                                                               -------
+  expected total                                                               = 260 s  < 720 s
+
+absolute worst case
+  40 turns x 9.0 s (BOTH deadlines blown on every single turn; the 5 s spacing
+    floor cannot add to a turn that already took 9 s)                          = 360 s
+  lobby / connect cap (2400 ticks at 24 Hz)                                    = 100 s
+  wall-paced play worst case                                                   = 180 s
+  game-over holds + results + replay write                                     =  20 s
+                                                                               -------
+  worst total                                                                  = 660 s  < 690 s stop
+                                                                                        < 720 s budget
+engine hard stop wallClockBudgetSeconds                                        = 690 s  -> reason "deadline"
+budget guard fires at elapsed > 690 - 2 x 10 = 670 s -> scripted tail, ends "complete"
+platform kill (episodeTimeoutSeconds)                                          = 1200 s
+```
+
+`tests/test_manifest.nim` recomputes that worst case **per variant** from the variant's own
+`maxTicks`/`turnTicks`/`maxGames` and fails if it does not fit inside that variant's own
+`wallClockBudgetSeconds`; `tests/test_engine.nim` pins the effective (post-floor) deadlines at 6 s
+and 3 s and pins the 4 618 ms median they must clear.
+
+**3. Two robustness fixes found in the same rounds**, neither of which changes a design decision:
+
+- **A seat's registration is durable.** Joins are strictly slot-sequential, so a seat whose slot is
+  not the next open one waits — and the lobby sends frames to a socket that has not been admitted
+  yet. Round 3's champion #2 connected first (slot 1), sent its registration and its one re-send
+  while unadmitted, and the server dropped both because the socket had no seat index yet: the
+  champion played the scripted `holdline` baseline for the whole episode with no `register` record.
+  The server now HOLDS an unconsumable registration until the seat is seated, and the player
+  re-sends it until the game leaves the lobby.
+- **The replay carries the `result` record** the §Record vocabulary table already lists. It was only
+  ever written by the test fixture, so `replay_summary.py --> .results` was `{}` for every hosted
+  episode and the results document existed solely at `COGAME_RESULTS_URI`.
+- **A mid-replay seek lands promptly.** See §Transport rules: a scrub, beat or keyboard seek that
+  arrives before the first chrome frame is now queued rather than dropped, and a seek whose target
+  sits past the precompute walk's keyframed prefix converges over bounded slices instead of
+  re-simulating thousands of ticks inside one presentation frame (the viewer-check's 50 % probe read
+  identically to its 0 % probe on a 4 405-tick replay).

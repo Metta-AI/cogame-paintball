@@ -693,6 +693,18 @@ proc validate(config: GameConfig) =
       PaintballError,
       "Config fields attempt1Ms + retryMs must fit inside turnBudgetMs."
     )
+  if config.attempt1Ms mod 1000 != 0 or config.retryMs mod 1000 != 0:
+    ## v1.1 timing amendment: curly passes the deadline to CURLOPT_TIMEOUT,
+    ## which is WHOLE SECONDS, and the turn loop floors the conversion. A
+    ## sub-second value is therefore not the deadline it claims to be —
+    ## `attempt1Ms: 4500` ran with 4 s against a 4618 ms sidecar median and
+    ## every successful call landed on 3999–4001 ms.
+    raise newException(
+      PaintballError,
+      "Config fields attempt1Ms and retryMs must be whole seconds " &
+      "(multiples of 1000): curly's transport timeout has whole-second " &
+      "granularity, so anything else is silently floored."
+    )
   if config.turnSpacingMs < 0:
     raise newException(
       PaintballError, "Config field turnSpacingMs must not be negative.")

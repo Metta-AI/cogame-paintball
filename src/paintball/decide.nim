@@ -404,11 +404,15 @@ proc turn*(
         SystemPrompt, userMessage(engine.seats[seat].prompt, user))
       batch.post(request.url, request.headers, request.body, $seat)
     let started = getMonoTime()
-    # curly's timeout is whole SECONDS, so a sub-second deadline has to round
-    # DOWN: rounding 4500 up to 5 s made a twice-timed-out turn take 5 + 2 =
-    # 7.0 s, exactly the turnBudgetMs cap rather than the note's 6.5 s worst
-    # case, and left the outer monotonic bound with nothing to spare. Floored,
-    # the pair is 4 + 2 = 6 s and the budget keeps its margin.
+    # curly hands the deadline to CURLOPT_TIMEOUT, whose granularity is WHOLE
+    # SECONDS, so this conversion FLOORS — and a config that is not a whole
+    # number of seconds is therefore not the deadline it claims to be. 0.1.2
+    # shipped `attempt1Ms: 4500` and really ran with 4 s against a sidecar
+    # whose median call measured 4618 ms; every successful LLM directive in
+    # that release reported a latency of 3999–4001 ms, i.e. it was the
+    # deadline answering, not the model. sim_config now REJECTS a sub-second
+    # value, so the floor below is an identity: 6000 -> 6 s, 3000 -> 3 s,
+    # worst case 9 s inside the 10 s turnBudgetMs cap.
     let responses = engine.client.curl.makeRequests(
       batch, max(1, deadlineMs div 1000))
     let latency = (getMonoTime() - started).inMilliseconds.int

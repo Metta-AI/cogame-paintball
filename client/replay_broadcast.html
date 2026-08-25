@@ -4148,9 +4148,20 @@ button.beat-marker {
             String(e.winner || '').toUpperCase() + ' holds the hill') +
           ' — click to jump here');
         return false;   // the end-card is state-driven; let the page see it too
+      case 'tag':
+        // The COMMON outcome in paintball: three touches tag a cog out, so
+        // most sprays that connect are this, not a tagout. The feed says so
+        // in the note's own words.
+        feedRow(
+          '<span class="who ' + (e.team || '') + '">' +
+          CTX.esc(e.victimAlias || cogName(s, e.victim)) +
+          '</span><span class="glyph">·</span>' +
+          '<span class="badge">tagged, ' + e.hp + ' hp left</span>');
+        return true;
       case 'hillhold':
       case 'paint':
       case 'heal':
+      case 'spray':
         return true;    // continuous colour; the BOARD is that readout
       case 'kill':
         return true;    // paintball draws the tagout row instead

@@ -266,8 +266,15 @@ suite "replay":
         let kind = event["k"].getStr()
         if kind notin kinds:
           kinds.add(kind)
+    echo "derived event kinds: ", kinds
     check "gamestart" in kinds
     check "paint" in kinds
+    ## Design §Tests 9 names these too, and the derived stream now carries
+    ## them: a burst leaving the can, and a cog that lost hit points and
+    ## stayed up — which at 3 hp and sprayDamage 1 is the COMMON outcome and
+    ## the one the match feed had no row for at all.
+    check "spray" in kinds
+    check "tag" in kinds
 
   test "replay_summary.py prints strict UTF-8 JSON with the non-ASCII text":
     let (output, code) = execCmdEx(

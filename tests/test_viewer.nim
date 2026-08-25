@@ -148,6 +148,15 @@ suite "broadcast chrome":
     check shell.find("'data-replay-error'") < shell.find("function setMismatchTick")
     check shell.find("'data-replay-loaded'") > loaded
 
+  test "the appended block routes every derived event kind the sim emits":
+    ## broadcast.stepEvents derives these; a kind the page does not name falls
+    ## through to the inherited chrome, which does not know it either.
+    let banner = page.find("PAINTBALL additions to the inherited")
+    let appended = page[banner .. ^1]
+    for kind in ["'gamestart'", "'hillflip'", "'tagout'", "'gameover'",
+                 "'hillhold'", "'paint'", "'heal'", "'spray'", "'tag'"]:
+      check ("case " & kind) in appended
+
   test "the worst-case renderer fixture exists and CI drives it":
     ## Checklist item 15's last bullet. The fixture is only evidence if it
     ## loads the REAL renderer, feeds it the worst frame, renders at several

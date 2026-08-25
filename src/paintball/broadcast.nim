@@ -39,6 +39,8 @@ type
     hillOwner: Team
     hillTicks: array[Team, int]
     paintCount: array[Team, int]
+    hp: seq[int]                ## per cog, for the `tag` and `heal` deltas.
+    arcTicks: seq[int]          ## per cog, for the `spray` (burst) delta.
     gameIndex: int
     startedGame: bool
 
@@ -63,11 +65,15 @@ proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
   tracker.kills.setLen(sim.players.len)
   tracker.deaths.setLen(sim.players.len)
   tracker.captures.setLen(sim.players.len)
+  tracker.hp.setLen(sim.players.len)
+  tracker.arcTicks.setLen(sim.players.len)
   for i, p in sim.players:
     tracker.alive[i] = p.alive
     tracker.kills[i] = p.kills
     tracker.deaths[i] = p.deaths
     tracker.captures[i] = p.captures
+    tracker.hp[i] = p.hp
+    tracker.arcTicks[i] = p.arcTicksLeft
   for team in sim.teams():
     tracker.carriers[team] = sim.flags[team].carrier
     tracker.captured[team] = sim.flags[team].captured
@@ -179,6 +185,35 @@ proc stepEvents*(
         events.add(%*{
           "t": tick, "k": "paint", "by": teamText(team), "tiles": laid,
           "hillTiles": sim.hillPaint[team]
+        })
+
+  # NEW (paintball): the three per-cog beats the design note's vocabulary
+  # names and the derived stream was missing. All three are state deltas, so
+  # they cost no replay bytes and read identically live and in replay:
+  #   spray — a burst left the can (arcTicksLeft went 0 -> alive)
+  #   tag   — a cog lost hit points and stayed up (the COMMON case at 3 hp and
+  #           sprayDamage 1, and the one the feed had no row for)
+  #   heal  — a cog gained a hit point standing on its own paint
+  for i, p in sim.players:
+    if i < tracker.arcTicks.len and p.arcTicksLeft > 0 and
+        tracker.arcTicks[i] == 0:
+      events.add(%*{
+        "t": tick, "k": "spray", "by": sim.slotOf(i),
+        "byAlias": sim.cogAlias(i), "team": teamText(p.team),
+        "aim": p.arcAimBrads
+      })
+    if i < tracker.hp.len and p.alive and tracker.alive[i]:
+      if p.hp < tracker.hp[i]:
+        events.add(%*{
+          "t": tick, "k": "tag", "victim": sim.slotOf(i),
+          "victimAlias": sim.cogAlias(i), "team": teamText(p.team),
+          "hp": max(0, p.hp), "lost": tracker.hp[i] - p.hp
+        })
+      elif p.hp > tracker.hp[i]:
+        events.add(%*{
+          "t": tick, "k": "heal", "who": sim.slotOf(i),
+          "whoAlias": sim.cogAlias(i), "team": teamText(p.team),
+          "hp": p.hp
         })
 
   # Kills and respawns, diffed per player like expand_replay.

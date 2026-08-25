@@ -456,13 +456,32 @@ proc checkReplayHash(replay: var ReplayPlayer, sim: SimServer) =
     return
   inc replay.hashIndex
 
+proc advanceReplayGame(sim: var SimServer) =
+  ## The playback mirror of the server's regime switch (its named edit #4).
+  ## `gameIndex`, `regime`, `gameHill` and `gameRegimes` are written only by
+  ## the live loop, and none of them is in `gameHash` — so without this the
+  ## readouts a spectator reads off a replay ("GAME 1/2 · RESIDENT") stay
+  ## frozen on game 1 for the whole episode and the visitor half is never
+  ## announced. Archiving here is also what lets the momentum series stay
+  ## cumulative across the two games.
+  if sim.config.cogsPerTeam <= 1 or sim.config.regimes.len == 0:
+    return
+  sim.gameHill.add(sim.hillTicks)
+  sim.gameRegimes.add(sim.regime)
+  sim.gameIndex = sim.gameHill.len
+  sim.regime = sim.config.regimes[
+    min(sim.gameIndex, sim.config.regimes.high)]
+
 proc stepReplay*(replay: var ReplayPlayer, sim: var SimServer) =
   ## Advances replay by one simulation tick.
   replay.clearReplayPressedMasks()
   replay.applyReplayEvents(sim)
   let prevInputs = replay.replayPrevInputs(sim.players.len)
   let inputs = replay.replayInputs(sim.players.len)
+  let phaseBefore = sim.phase
   sim.step(inputs, prevInputs)
+  if phaseBefore != GameOver and sim.phase == GameOver:
+    sim.advanceReplayGame()
   replay.clearReplayPressedMasks()
   replay.checkReplayHash(sim)
 

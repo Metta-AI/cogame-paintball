@@ -223,3 +223,25 @@ suite "replay":
         sawUmlaut = true
     check sawUmlaut
     check node["results"]["names"].len == 2
+
+  test "playback advances the game index and the regime, game by game":
+    ## gameIndex/regime are written only by the live loop and are not in
+    ## gameHash, so playback used to leave them frozen: a two-game cert replay
+    ## read "GAME 1/2 · RESIDENT" at 0%, at 50% and at 100%, and the visitor
+    ## half was never announced to the spectator.
+    let data = parseReplayBytes(readFile(path))
+    var runtime = initReplayRuntime(data, mismatchQuit = true,
+      gameEventLoggingEnabled = false)
+    var player = runtime.player
+    var sim = runtime.sim
+    check sim.gameIndex == 0
+    check sim.regime == regimeResident
+    var sawVisitor = false
+    while player.playing and sim.tickCount < player.replayMaxTick():
+      player.stepReplay(sim)
+      if sim.regime == regimeVisitor:
+        sawVisitor = true
+    check sawVisitor                      ## the second half IS announced
+    check sim.gameIndex == Games          ## both halves accounted for
+    check sim.gameHill.len == Games
+    check sim.gameRegimes == @[regimeResident, regimeVisitor]

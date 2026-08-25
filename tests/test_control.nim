@@ -140,7 +140,16 @@ suite "control layer and scripted baselines":
         for seat in 0 .. 1:
           let commanded = sim.commandedCogs(seat)
           if (seat == 0) == redActive:
-            directives[seat] = scriptedDirective(ctl, sim, blHoldline, commanded)
+            ## All four cogs on paint_hill — a directive an LLM can issue, and
+            ## the one that answers "can 80% of the hill be reached at all".
+            ## goalFor sends each cog to the nearest tile that is not yet ours,
+            ## so they spread across the square without being told to.
+            directives[seat] = SquadDirective(source: dsScripted, note: "sweep")
+            let hill = hillCentre(sim)
+            for cogIndex in commanded:
+              directives[seat].orders.add(CogOrder(
+                cogIndex: cogIndex, id: sim.cogAlias(cogIndex),
+                intent: intPaintHill, targetX: hill.x, targetY: hill.y))
           else:
             ## Stand down: walk home and never spray.
             directives[seat] = SquadDirective(source: dsScripted, note: "stand")

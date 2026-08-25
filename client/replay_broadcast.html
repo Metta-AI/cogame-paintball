@@ -4051,10 +4051,12 @@ button.beat-marker {
 <script>
 (function () {
   'use strict';
-  // Named pbBeat, pbFrame, pbEvent … — deliberately NOT markBeat: the page's
-  // chrome alias block hoists `var markBeat = C.markBeat`, and a game-block
-  // function of the same name would be swallowed by it, leaving unlabelled
-  // div markers that never seek (cogame-tandem, 2026-08-23).
+  // Every name here carries a pb- prefix ON PURPOSE. The page's chrome alias
+  // block declares the shared beat builder with a hoisted `var`, so a
+  // game-block function of that same name is silently swallowed by it and the
+  // scrubber ends up with unlabelled div markers that never seek
+  // (cogame-tandem, 2026-08-23). tests/test_viewer.nim asserts the whole
+  // alias list is untouched below this banner.
   var CTX = null;
   var placed = {};          // "tick|kind|team" -> true (dedup)
   var lastRegime = '';

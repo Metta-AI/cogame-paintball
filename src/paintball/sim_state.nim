@@ -167,7 +167,14 @@ proc gameHash*(sim: SimServer): uint64 =
     result.mixHashInt(sim.barrageStartTick)
     result.mixHashInt(sim.barrageAccum)
   result.mixHashBool(sim.isDraw)
-  result.mixHashBool(sim.needsReregister)
+  ## `needsReregister` is deliberately NOT hashed. It is live-server lobby
+  ## plumbing: resetToLobby raises it and the SERVER lowers it as part of
+  ## re-seating the roster, and re-seating is not a recorded event — so a
+  ## replay has no way to re-derive the lowering and the flag would disagree
+  ## on the first tick of the next game of a multi-game episode. Same rule the
+  ## starter already applies to puddleTicks, hasBarrier and lobbyWaitTimer:
+  ## deterministic state the replay stream cannot reproduce stays out of the
+  ## chain and is restored exactly by the flatty keyframe snapshot instead.
   result.mixHashInt(sim.nextJoinOrder)
   for team in sim.teams():
     result.mixHashInt(sim.flags[team].x)

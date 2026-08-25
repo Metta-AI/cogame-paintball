@@ -21,13 +21,8 @@ const
   NavCell* = PaintTile        ## nav grid cell: one cog body, like the paint grid.
   FieldRefreshTicks* = 12     ## a flow field is recomputed at most this often.
   ArriveRadius* = 20          ## px: a cog this close to its goal stops moving.
-  PaintStandoff* = 96         ## px: a cog whose intent PAINTS stops this far
-                              ## short of its target instead of standing on it.
-                              ## Standing on the tile you were sent to paint is
-                              ## a deadlock: the trigger probe looks DOWNRANGE,
-                              ## so the target itself is never in front of the
-                              ## can, and the aim vector to a goal 5px away is
-                              ## numerically meaningless.
+  AimMinRangeSq* = 16 * 16    ## an aim target nearer than this gives a vector
+                              ## too short to mean a direction.
   AimDeadBrads* = 4           ## no turn button inside this error.
   FireAimBrads* = 24          ## widest aim error that still pulls the trigger.
   HuntMemoryTicks* = 72       ## how long a seen enemy stays "known".
@@ -355,10 +350,13 @@ proc compileMask*(
     goal = ctl.goalFor(sim, order, cogIndex)
 
   # --- d-pad: the octant of the steering vector, unless we have arrived ---
-  let stopRadius =
-    if order.intent in {intPaintHill, intPaintPath}: PaintStandoff
-    else: ArriveRadius
-  if distSq(px, py, goal.x, goal.y) > stopRadius * stopRadius:
+  # A painting cog WALKS ONTO its target and keeps going: the cone starts at
+  # the cog and reaches forward, so ground is painted while it is still ahead
+  # and a squad sweeping across the hill covers it. Holding a cog a cone-length
+  # short of its target instead was tried and measured WORSE — it stopped
+  # moving as soon as everything in front of it was already its colour, and a
+  # squad with no opposition covered nothing at all.
+  if distSq(px, py, goal.x, goal.y) > ArriveRadius * ArriveRadius:
     let steer = ctl.navSteer(sim.tickCount, px, py, goal.x, goal.y)
     let
       ax = abs(steer.dx)
@@ -384,7 +382,25 @@ proc compileMask*(
   elif order.hasFace:
     aimX = order.faceX
     aimY = order.faceY
-  elif not order.paintsAhead():
+  elif order.paintsAhead():
+    ## Point the can at something worth painting. Two degenerate cases matter:
+    ## a cog STANDING ON its goal has an aim vector of length ~0 (which reads
+    ## as due east), and a hill intent whose target is already our colour has
+    ## nothing to spray. Both are fixed by aiming at the nearest hill tile that
+    ## is NOT ours — which is also what makes `hold_hill` keep the rim painted
+    ## instead of guarding one tile and firing at nothing.
+    var aimed = false
+    if order.intent in {intHoldHill, intPaintHill}:
+      let tile = nearestHillTile(sim, px, py, 0, player.team)
+      if tile.found and distSq(px, py, tile.x, tile.y) > AimMinRangeSq:
+        aimX = tile.x
+        aimY = tile.y
+        aimed = true
+    if not aimed and distSq(px, py, goal.x, goal.y) <= AimMinRangeSq:
+      let hill = hillCentre(sim)
+      aimX = hill.x
+      aimY = hill.y
+  else:
     let hill = hillCentre(sim)
     aimX = hill.x
     aimY = hill.y

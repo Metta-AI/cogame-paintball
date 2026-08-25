@@ -124,12 +124,13 @@ suite "control layer and scripted baselines":
     ## reach 80% of the hill's floor. Across the pair the hill demonstrably
     ## changes hands — unowned to RED, and unowned to BLUE.
     ##
-    ## Re-taking a hill from a squad that is already entrenched on it is a
-    ## different, BALANCE question: paint does not decay, an incumbent stands
-    ## on its own colour at 125% speed and heals every two seconds, and the
-    ## challenger has to repaint seventeen tiles while being sprayed. That
-    ## number is logged below, not asserted, because it is a property of the
-    ## two scripted baselines rather than of the rules.
+    ## This is also the regression that caught a wedged squad: on a nav grid
+    ## too coarse for the arena's corridors, BLUE covered 0% of the hill where
+    ## RED covered 95%, because the flow field called the far side of every
+    ## obstacle column unreachable and the cogs pressed one d-pad direction
+    ## into a wall for two thousand ticks. Both sides now reach 100%. Asserting
+    ## it PER COLOUR is what makes that failure visible: an asymmetry between
+    ## the two halves of a mirror-symmetric arena is always a defect.
     for sweeper in [Red, Blue]:
       ## maxTicks far beyond the run: once a squad owns the hill it banks a
       ## tick a tick, and the MERCY rule would otherwise end the game the
@@ -177,6 +178,10 @@ suite "control layer and scripted baselines":
                 ctl.compileMask(sim, order, cogIndex))
               break
         if tick mod 400 == 0:
+          ## A wedged cog is invisible in the totals but obvious here: its
+          ## position stops changing while its mask keeps naming one
+          ## direction. Cheap enough to leave in, and it is what turned "blue
+          ## covers 0%" into a diagnosis in one CI round.
           var line = ""
           for cogIndex in sim.commandedCogs(sweeperSeat):
             let p = sim.players[cogIndex]
@@ -190,7 +195,7 @@ suite "control layer and scripted baselines":
             line.add " #" & $cogIndex & " " & $p.x & "," & $p.y &
               (if p.alive: "" else: "!dead") & " brads " & $p.aimBrads &
               " -> " & $gx & "," & $gy & " mask " & $mask
-          echo "TRACE ", teamText(sweeper), " t", tick, line
+          echo "  trace ", teamText(sweeper), " t", tick, line
         sim.step(inputs, prev)
         prev = inputs
         let owner = if sim.hillOwned: ord(sim.hillOwner) else: -1
@@ -204,7 +209,7 @@ suite "control layer and scripted baselines":
           let c = sim.paintTileCentre(tile)
           hills.add " " & $c.x & "," & $c.y & ":" &
             (if sim.paintFloor[tile]: $sim.paintOwner[tile] else: "W")
-        echo "TRACE hill ", teamText(sweeper), " anchors red ",
+        echo "  trace hill ", teamText(sweeper), " anchors red ",
           sim.gameMap.teamAnchor(Red), " blue ", sim.gameMap.teamAnchor(Blue),
           " map ", MapWidth, "x", MapHeight, " grid ", sim.paintGridW, "x",
           sim.paintGridH, " |", hills
@@ -221,18 +226,25 @@ suite "control layer and scripted baselines":
       ## The hill started unowned and ended this squad's: it changed hands.
       check owners.len >= 1
       if owners.len >= 1:
+        ## Guarded so an empty seq FAILS the test above rather than aborting
+        ## the whole suite on an IndexDefect.
         check owners[^1] == ord(sweeper)
 
   test "two evenly-matched baselines both spray, and the hill stays contested":
-    ## The symmetric run. What is STRUCTURAL here is that both squads act:
-    ## each lays floor paint and the episode completes without a fault. Who
-    ## ends up owning the hill is a BALANCE property of two scripted
-    ## baselines meeting head-on, and it is logged rather than pinned — as
-    ## measured, both baselines switch most of their cogs to `hunt` the moment
-    ## they meet at the centre (holdline inside 200px, sprayer inside 120px),
-    ## so a filler-vs-filler episode fights instead of painting and neither
-    ## side reaches the 80% that owns the hill. That is what the LLM champions
-    ## are for; it is recorded here so a later balance pass has the number.
+    ## The symmetric run — the filler-vs-filler episode a league actually
+    ## plays. Three things are STRUCTURAL and asserted: both squads lay floor
+    ## paint, the episode completes without a fault, and the hill is banked by
+    ## somebody. That last one is the anti-stalemate invariant: two squads that
+    ## both walk to the centre and neither of which can ever own it produce a
+    ## 0.500 draw every time, and a ladder of draws ranks nothing. It is also
+    ## exactly what a wedged-cog regression looks like from the outside.
+    ##
+    ## WHICH baseline wins is a balance property of two scripted policies
+    ## meeting head-on, so it is logged rather than pinned. As measured,
+    ## `sprayer` beats `holdline` clearly — it reaches 18 of 21 hill tiles and
+    ## banks ~730 hill ticks to holdline's 0, because holdline switches cogs to
+    ## `hunt` inside 200px where sprayer only does so inside 120px and keeps
+    ## painting for longer. A later balance pass has the number here.
     var sim = newPaintballSim(paintballConfigJson(maxTicks = 3000))
     var ctl = initControlState(sim)
     sim.scriptedEpisode(ctl, [blHoldline, blSprayer], 3000)
@@ -245,4 +257,5 @@ suite "control layer and scripted baselines":
       " | phase=", sim.phase
     check sim.paintCount[Red] > 0
     check sim.paintCount[Blue] > 0
+    check sim.hillTicks[Red] + sim.hillTicks[Blue] > 0
     check sim.endReason in ["", ReasonComplete]

@@ -342,14 +342,14 @@ proc applyReplayEvents(replay: var ReplayPlayer, sim: var SimServer) =
     if int(leave.player) < 0 or int(leave.player) >= sim.players.len:
       raise newException(ReplayError, "Replay player leave is invalid")
     sim.removePlayerAt(int(leave.player))
-    if int(leave.player) < replay.masks.len:
-      replay.masks.delete(int(leave.player))
-    if int(leave.player) < replay.pressedMasks.len:
-      replay.pressedMasks.delete(int(leave.player))
-    if int(leave.player) < replay.lastAppliedMasks.len:
-      replay.lastAppliedMasks.delete(int(leave.player))
-    if int(leave.player) < replay.overlays.len:
-      replay.overlays.delete(int(leave.player))
+    ## The second named edit to this file: a leave does NOT shift the mask
+    ## arrays. ctf deleted the leaving player's rows, which renumbered every
+    ## later entry; paintball's cogs are fixed for the whole episode and the
+    ## recorded masks are indexed BY COG, so deleting a row would silently
+    ## re-point every mask after it at the wrong cog for the rest of playback.
+    ## The roster entry goes; the cog mask slots stay where they are. (Only
+    ## the /global kick path writes a leave mid-episode — a dropped seat never
+    ## does — which is exactly the case this protects.)
     inc replay.leaveIndex
 
   while replay.joinIndex < replay.data.joins.len and

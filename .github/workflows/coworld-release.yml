@@ -170,8 +170,12 @@ jobs:
           set -euo pipefail
           echo "Certify locally" > "$RR/current_step"
           set +e
+          # --timeout-seconds 300: the default 60 s has to cover container
+          # start, the connect grace, 2 x 600 ticks of play and the linger
+          # before exit, and 60 s is thin for that (cooperative-hunting 0.1.2).
           uvx --from "$COWORLD_PKG" coworld certify dist/coworld_manifest.json \
             --no-open-report \
+            --timeout-seconds 300 \
             2>&1 | tee "$RR/certify.log"
           rc="${PIPESTATUS[0]}"
           set -e

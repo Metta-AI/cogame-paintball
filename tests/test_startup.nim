@@ -116,6 +116,17 @@ suite "startup":
     check manifest["game"]["runnable"]["run"][0].getStr() == "/bin/paintball"
     check manifest["player"][0]["run"][0].getStr() == "/bin/paintball-player"
 
+  test "certify runs with the timeout the cert fixture needs":
+    ## The default 60 s covers container start + the connect grace + 2 x 600
+    ## ticks + the linger; the design note pins 300 (cooperative-hunting
+    ## 0.1.2). The 900 further down belongs to the upload step.
+    let release = readFile(".github/workflows/coworld-release.yml")
+    let certify = release.find("coworld certify")
+    check certify >= 0
+    let timeout = release.find("--timeout-seconds 300", certify)
+    check timeout > certify
+    check timeout < release.find("Upload the policies")
+
   test "the CI scaffold is present and the hooks are executable":
     for path in [".github/workflows/ci.yml",
                  ".github/workflows/coworld-release.yml",

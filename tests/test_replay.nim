@@ -9,7 +9,50 @@ const
   Ticks = 240          ## short on purpose: this runs in DEBUG too.
   Games = 2
 
-proc recordEpisode(path: string): tuple[hashes, records: int] =
+const LegalIntents = ["paint_hill", "hold_hill", "hunt", "guard",
+                      "paint_path", "fall_back"]
+
+proc orderViolations(
+  sim: SimServer, directive: SquadDirective, commanded: seq[int]
+): int =
+  ## Every bound the reply schema puts on ONE issued order set, counted rather
+  ## than asserted so the episode loop can keep playing and report a total.
+  if directive.orders.len != commanded.len:
+    inc result
+  if directive.note.runeLen > MaxNoteRunes:
+    inc result
+  var seen: seq[int]
+  for order in directive.orders:
+    if order.cogIndex notin commanded or order.cogIndex in seen:
+      inc result
+    seen.add(order.cogIndex)
+    if order.id != sim.cogAlias(order.cogIndex):
+      inc result
+    if order.id.runeLen > MaxCogIdRunes:
+      inc result
+    if $order.intent notin LegalIntents:
+      inc result
+    if order.targetX < 0 or order.targetX >= MapWidth:
+      inc result
+    if order.targetY < 0 or order.targetY >= MapHeight:
+      inc result
+    if order.say.runeLen > MaxSayRunes:
+      inc result
+    if order.hasFace and (order.faceX < 0 or order.faceX >= MapWidth or
+        order.faceY < 0 or order.faceY >= MapHeight):
+      inc result
+
+proc maskViolations(mask: uint8): int =
+  ## The actuator bounds: never Up+Down, never Left+Right, never C.
+  if (mask and ButtonUp) != 0 and (mask and ButtonDown) != 0:
+    inc result
+  if (mask and ButtonLeft) != 0 and (mask and ButtonRight) != 0:
+    inc result
+  if (mask and ButtonC) != 0:
+    inc result
+
+proc recordEpisode(path: string): tuple[
+  hashes, records, orders, masks, violations: int, results: string] =
   ## Plays a scripted-vs-scripted episode straight through the SIM (no
   ## sockets), writing exactly the records the server writes: joins per cog,
   ## per-cog mask changes, the control records, cog shouts, and one gameHash
@@ -63,6 +106,9 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
       for seat in 0 .. 1:
         directives[seat] =
           scriptedDirective(ctl, sim, kinds[seat], sim.commandedCogs(seat))
+        result.violations += sim.orderViolations(
+          directives[seat], sim.commandedCogs(seat))
+        result.orders += directives[seat].orders.len
         ## A non-ASCII note, so the record really carries multi-byte text.
         directives[seat].note = "hüll " & $turn
         let record = directives[seat].boundedDirectiveRecord(
@@ -92,6 +138,8 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
             continue
           order = scripted.orders[0]
         let mask = ctl.compileMask(sim, order, cogIndex)
+        result.violations += maskViolations(mask)
+        inc result.masks
         inputs[cogIndex] = decodeInputMask(mask)
         writer.writeInputMaskChange(tickTime(sim.tickCount), cogIndex, mask)
     else:
@@ -122,18 +170,24 @@ proc recordEpisode(path: string): tuple[hashes, records: int] =
           sim.players[order].address, order, "")
       while writer.lastMasks.len < sim.players.len:
         writer.lastMasks.add(0)
-  let results = sim.playerResultsJson()
+  result.results = sim.playerResultsJson()
   writer.writeChat(tickTime(sim.tickCount), 0,
-    $(%*{"k": "result", "results": parseJson(results)}))
+    $(%*{"k": "result", "results": parseJson(result.results)}))
   inc result.records
-  writeFile(path.changeFileExt("results.json"), results)
+  writeFile(path.changeFileExt("results.json"), result.results)
 
 suite "replay":
   let dir = getTempDir() / "paintball-test-replay"
   createDir(dir)
   let path = dir / "episode.bitreplay"
 
-  test "an episode writes a COWLDPNT replay and a results document":
+  test "an all-scripted episode plays to its natural end and reports complete":
+    ## Checklist item 7, first sentence: an all-scripted episode run to the
+    ## NATURAL end, `results.reason == "complete"`, and every order and every
+    ## actuator mask inside its legal bounds — checked on the real episode
+    ## rather than only on the 500 synthetic states in test_control.nim. The
+    ## reason was previously accepted as any of three values, which passes
+    ## whether the episode finished or died.
     let written = recordEpisode(path)
     check written.hashes > Ticks
     check written.records > 4
@@ -141,8 +195,20 @@ suite "replay":
     check getFileSize(path) > 1000
     let results = parseJson(readFile(path.changeFileExt("results.json")))
     check results["names"].len == 2
-    check results["reason"].getStr() in
-      [ReasonComplete, ReasonDeadline, ReasonFault]
+    echo "episode: reason=", results["reason"].getStr(), " endRule=",
+      results["endRule"].getStr(), " games=", results["games"].getInt(),
+      " finalTick=", results["finalTick"].getInt(), " orders=", written.orders,
+      " masks=", written.masks
+    check results["reason"].getStr() == ReasonComplete
+    check results["endRule"].getStr() in
+      [EndRuleFullTime, EndRuleMercy, EndRuleWipe]
+    check results["games"].getInt() == Games
+    check results["finalTick"].getInt() > Ticks
+    ## Both squads played every turn of both games, and nothing they were told
+    ## to do or actually pressed was out of bounds.
+    check written.orders >= 8
+    check written.masks > Ticks
+    check written.violations == 0
 
   test "parseReplayBytes accepts it and every recorded hash re-simulates":
     let data = parseReplayBytes(readFile(path))

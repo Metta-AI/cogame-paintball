@@ -18,6 +18,7 @@ proc paintballConfigJson*(
   paintBuff = true,
   hill = true,
   floorPaint = true,
+  loadout = "paintball",
   seed = 679961
 ): string =
   ## The config every fixture starts from: two seats, four cogs a squad, the
@@ -38,7 +39,7 @@ proc paintballConfigJson*(
     "sprayDamage": 1,
     "respawnTicks": 48,
     "mapPath": "arena",
-    "loadout": "paintball",
+    "loadout": loadout,
     "floorPaint": floorPaint,
     "paintBuff": paintBuff,
     "hill": hill,

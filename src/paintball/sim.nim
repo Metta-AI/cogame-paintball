@@ -158,6 +158,12 @@ proc barrierSpawnPoints*(gameMap: PaintballMap, perTeam: int): seq[tuple[x, y: i
     )
     result.add(gameMap.teamOrbitPoints(red))
 
+proc paintballLoadout*(sim: SimServer): bool {.inline.} =
+  ## True while the paintball loadout is on: every cog holds a spray can and
+  ## never loses it, the gun is disabled (the starter's own rule for a can
+  ## carrier), NO pickups are placed at all, and there is no heart objective.
+  sim.config.loadout == LoadoutPaintball
+
 template placeWalkablePickups(
   sim: var SimServer,
   spawnsField: untyped,
@@ -167,6 +173,15 @@ template placeWalkablePickups(
   ## spray cans): sizes the spawn seq to the targets, nudges each target to
   ## the nearest walkable floor, and refills every spawn. (Grenade spawns
   ## keep their own placement — they are never nudged.)
+  ##
+  ## Under the paintball loadout NO pickup is placed at all: the family is
+  ## emptied instead. The pickup/update path is already skipped there, so an
+  ## un-emptied family could not be taken — but it was still reported in the
+  ## seats' first-person JSON, listed as a map item and drawn on the board, so
+  ## the picture and the LLM's view both carried objects the rules do not have.
+  if sim.paintballLoadout():
+    sim.spawnsField.setLen(0)
+    return
   let targetsOnce = targets   # evaluate the expression once, not per use
   sim.spawnsField.setLen(targetsOnce.len)
   for i in 0 ..< sim.spawnsField.len:
@@ -177,10 +192,15 @@ template placeWalkablePickups(
 
 proc resetGrenades*(sim: var SimServer) =
   ## Refills every corner pickup and clears carried and airborne grenades.
-  let points = sim.gameMap.grenadeSpawnPoints()
+  ## Under the paintball loadout the corners stay EMPTY (the spawn array is
+  ## fixed-size, so "not placed" is `present: false` here); nothing is drawn,
+  ## reported or takeable.
+  let
+    points = sim.gameMap.grenadeSpawnPoints()
+    present = not sim.paintballLoadout()
   for i in 0 ..< sim.grenadeSpawns.len:
     sim.grenadeSpawns[i] = PickupSpawn(
-      x: points[i].x, y: points[i].y, present: true, respawnAt: 0
+      x: points[i].x, y: points[i].y, present: present, respawnAt: 0
     )
   sim.airborneGrenades = @[]
   for i in 0 ..< sim.players.len:
@@ -233,12 +253,6 @@ proc resetBarriers*(sim: var SimServer) =
   sim.placedBarriers = @[]
   for i in 0 ..< sim.players.len:
     sim.players[i].hasBarrier = false
-
-proc paintballLoadout*(sim: SimServer): bool {.inline.} =
-  ## True while the paintball loadout is on: every cog holds a spray can and
-  ## never loses it, the gun is disabled (the starter's own rule for a can
-  ## carrier), NO pickups are placed at all, and there is no heart objective.
-  sim.config.loadout == LoadoutPaintball
 
 proc seatCount*(sim: SimServer): int {.inline.} =
   ## How many SEATS (websocket connections) this game has. Two here: one seat

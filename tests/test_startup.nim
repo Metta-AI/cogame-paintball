@@ -71,6 +71,41 @@ suite "startup":
     check config.sprayDamage == SprayPaintDamage
     check config.numAgents == 0
 
+  test "the paintball loadout places NO pickups at all":
+    ## Design §Loadout 3: grenades, med kits, shields, spray cans and cardboard
+    ## barriers are skipped. The pickup/update path was already skipped, so
+    ## nothing could be TAKEN — but the spawns were still drawn on the board and
+    ## listed to the seats, so the picture and the LLM's view carried objects
+    ## the rules do not have.
+    var sim = newPaintballSim()
+    check sim.paintballLoadout()
+    check sim.medKitSpawns.len == 0
+    check sim.shieldSpawns.len == 0
+    check sim.sprayPaintSpawns.len == 0
+    check sim.barrierSpawns.len == 0
+    for spawn in sim.grenadeSpawns:
+      check not spawn.present
+    ## Every consumer keys off `present` / the family length — the seats'
+    ## first-person item list (broadcast.firstPersonJson), the spectator's map
+    ## items (broadcast.rosterJson) and all five board draw passes — so an
+    ## empty family is the one place that makes them all agree with the rules.
+    ## And the cog still holds its can: the loadout issues it for good.
+    check sim.players[0].hasSprayPaint
+
+  test "the ctf loadout still places the starter's pickups":
+    ## The gate composes: a gate-off config plays the starter's rules, which is
+    ## what keeps the inherited engine meaningful.
+    var sim = newPaintballSim(paintballConfigJson(
+      paintBuff = false, hill = false, floorPaint = false, loadout = "ctf"))
+    check not sim.paintballLoadout()
+    check sim.medKitSpawns.len > 0
+    check sim.shieldSpawns.len > 0
+    var anyGrenade = false
+    for spawn in sim.grenadeSpawns:
+      if spawn.present:
+        anyGrenade = true
+    check anyGrenade
+
   test "both entrypoints are declared in the Dockerfile and the manifest":
     let dockerfile = readFile("Dockerfile")
     check "src/paintball.nim" in dockerfile

@@ -249,6 +249,17 @@ proc registerRecord*(
     "baseline": baseline
   })
 
+proc resultRecord*(sim: SimServer): string =
+  ## The `result` control record — the episode's whole results document,
+  ## written once into the replay chat stream at episode end (design §Record
+  ## vocabulary, docs/PROTOCOL.md §The replay). It is what makes the replay
+  ## SELF-SUFFICIENT: without it the outcome exists only at
+  ## COGAME_RESULTS_URI, and `replay_summary.py`'s `results` reads `{}` for a
+  ## spectator holding the bytes. The document is already valid JSON, so it is
+  ## embedded verbatim rather than re-parsed: nothing on the path to the
+  ## artifact writes may raise.
+  "{\"k\":\"result\",\"results\":" & sim.playerResultsJson() & "}"
+
 proc budgetGuardRecord(turn, remainingSeconds: int): string =
   $(%*{"k": "budget_guard", "turn": turn, "remaining_s": remainingSeconds})
 

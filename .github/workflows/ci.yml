@@ -251,18 +251,35 @@ jobs:
       # champion #2's registration that way and the champion played the
       # scripted baseline for the whole episode. The smoke's replay is a real
       # episode from the real server, so the record count is the gate.
-      - name: Assert the smoke replay carries both seats' registrations
+      - name: Assert the smoke replay carries both registrations and the result
         run: |
           set -euo pipefail
+          # The JSON view of the binary replay, from the tool the verifier uses.
+          python3 tools/replay_summary.py dist/smoke/replay.json \
+            > dist/smoke/summary.json
           python3 - <<'PY'
-          import pathlib, sys
+          import json, pathlib, sys
           data = pathlib.Path("dist/smoke/replay.json").read_bytes()
           registers = data.count(b'{"k":"register"')
-          print(f"replay: {registers} register record(s), {len(data)} bytes")
+          results = data.count(b'{"k":"result"')
+          print(f"replay: {registers} register record(s), {results} result "
+                f"record(s), {len(data)} bytes")
           if registers != 2:
               sys.exit(f"::error::expected one register record per seat (2), "
                        f"found {registers}: a seat's registration was dropped, "
                        "so its squad played the scripted baseline")
+          # The `result` record is what makes the replay self-sufficient. It was
+          # written only by the test fixture, so every hosted episode's
+          # replay_summary.py `results` read {} (phase 60, 2026-08-25).
+          if results != 1:
+              sys.exit(f"::error::expected exactly 1 result record, found "
+                       f"{results}: the replay does not carry the episode's "
+                       "own results document")
+          summary = json.loads(pathlib.Path("dist/smoke/summary.json").read_text())
+          if not summary.get("results", {}).get("reason"):
+              sys.exit(f"::error::replay_summary.py read no results.reason: "
+                       f"{summary.get('results')!r}")
+          print("replay results:", json.dumps(summary["results"]))
           PY
 
       # The replay this episode produced is the ONLY replay in CI that is

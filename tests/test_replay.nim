@@ -171,8 +171,9 @@ proc recordEpisode(path: string): tuple[
       while writer.lastMasks.len < sim.players.len:
         writer.lastMasks.add(0)
   result.results = sim.playerResultsJson()
-  writer.writeChat(tickTime(sim.tickCount), 0,
-    $(%*{"k": "result", "results": parseJson(result.results)}))
+  ## The same builder the server writes at episode end (decide.resultRecord),
+  ## so this fixture cannot drift from the real record.
+  writer.writeChat(tickTime(sim.tickCount), 0, sim.resultRecord())
   inc result.records
   writeFile(path.changeFileExt("results.json"), result.results)
 

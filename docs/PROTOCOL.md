@@ -118,7 +118,11 @@ python3 tools/replay_summary.py episode.replay | jq .
 ## Results
 
 Written to `COGAME_RESULTS_URI`; it must equal the manifest's
-`results_schema` key for key.
+`results_schema` key for key. The **same document** is embedded once in the
+replay chat stream at episode end as the `result` control record
+(`{"k":"result","results":{…}}`), so the bytes are self-sufficient:
+`tools/replay_summary.py` reports it as `.results` for anyone holding only the
+replay.
 
 ```json
 {"names": ["daveey", "daveey-1"], "scores": [0.604, 0.396],

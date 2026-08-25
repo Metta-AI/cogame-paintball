@@ -2170,6 +2170,16 @@ proc runServerLoop*(
       finishProfileTrace()
 
     if quitAfterFrame:
+      # The `result` control record: the full results document, written once
+      # into the replay chat stream at episode end, exactly as
+      # docs/PROTOCOL.md and the design note's record table describe. Without
+      # it a replay is not self-sufficient — `replay_summary.py`'s `results`
+      # was `{}` for every hosted episode and the only copy of the outcome
+      # lived at COGAME_RESULTS_URI, which a spectator with the bytes cannot
+      # read. Written BEFORE the writer closes, and never applied as a shout
+      # (a leading '{' marks a control record), so the hash chain is
+      # untouched.
+      replayWriter.writeChat(tickTime(sim.tickCount), 0, resultRecord(sim))
       if saveReplayPath.len > 0:
         echo "Writing replay file: ", saveReplayPath
       replayWriter.closeReplayWriter()

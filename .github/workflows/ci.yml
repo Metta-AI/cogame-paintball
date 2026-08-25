@@ -158,6 +158,26 @@ jobs:
       - name: Baseline parameter grid harness
         run: nim r --hints:off -d:release --path:src tools/tune_baselines.nim --check
 
+      # Design §Determinism 4: the NEW hashed arithmetic is integer only.
+      # paint.nim is the only new module inside the hash (AGENTS.md scopes the
+      # rule to it and to anything sim.step calls under a paintball gate);
+      # control.nim is outside the determinism boundary and navigates in
+      # floats on purpose. Nim's int is 32-bit under --cpu:wasm32 and the
+      # viewer re-derives every tick, so a float here is a native<->wasm
+      # divergence waiting for a hosted replay.
+      - name: Assert the new hashed arithmetic is integer-only
+        run: |
+          set -uo pipefail
+          # Comment lines are stripped first: the file EXPLAINS the rule, and
+          # that explanation must not read as a violation of it.
+          if grep -vE '^[[:space:]]*#' src/paintball/paint.nim \
+              | grep -nE 'float|sqrt|hypot|sin\(|cos\(|tan\(|arctan'; then
+            echo "::error::src/paintball/paint.nim is HASHED arithmetic and must"
+            echo "::error::stay integer-only (see AGENTS.md rule 1)"
+            exit 1
+          fi
+          echo "paint.nim: no floating point"
+
       # The worst-case renderer fixture's FRAME (checklist item 15, last
       # bullet). Every replay CI can produce is played by scripted baselines
       # with no key, so the model-authored text the viewer draws is never the

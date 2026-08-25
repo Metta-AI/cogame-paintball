@@ -233,6 +233,29 @@ proc checkPaintInvariants*(sim: SimServer) =
       raise newException(SimGuardError,
         "cog " & $i & " is outside the map at " & $p.x & "," & $p.y)
 
+proc hillPixelBox*(sim: SimServer): array[4, int] =
+  ## The hill's bounding box in MAP PIXELS: [x0, y0, x1, y1] of the tile block
+  ## itself, inclusive of its last pixel. This is the box the seats' view JSON
+  ## reports, so it has to be the tiles a cog actually has to paint rather
+  ## than a radius measured off the hill's centre pixel.
+  let size = sim.paintTileSize()
+  if sim.hillTiles.len == 0:
+    return [0, 0, 0, 0]
+  var
+    x0 = MapWidth
+    y0 = MapHeight
+    x1 = 0
+    y1 = 0
+  for tile in sim.hillTiles:
+    let
+      tx = (tile mod sim.paintGridW) * size
+      ty = (tile div sim.paintGridW) * size
+    x0 = min(x0, tx)
+    y0 = min(y0, ty)
+    x1 = max(x1, tx + size - 1)
+    y1 = max(y1, ty + size - 1)
+  [x0, y0, x1, y1]
+
 proc hillOwnsFor*(sim: SimServer, team: Team): bool {.inline.} =
   ## Whether `team` covers at least `hillOwnPermille` of the hill's FLOOR
   ## tiles. The threshold is > 500 by config validation, so at most one team

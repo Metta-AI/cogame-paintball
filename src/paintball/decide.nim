@@ -85,13 +85,12 @@ proc seatViewJson*(
     commanded = sim.commandedCogs(seat)
     size = sim.paintTileSize()
     hill = hillCentre(sim)
-    radius = max(0, sim.config.hillRadiusTiles)
-    box = [
-      hill.x - (radius * size + size div 2),
-      hill.y - (radius * size + size div 2),
-      hill.x + (radius * size + size div 2),
-      hill.y + (radius * size + size div 2)
-    ]
+    ## The hill's REAL pixel box: the bounding box of its tile block, taken
+    ## from the tile list itself. Deriving it from the hill centre instead put
+    ## it half a tile out on every side (the centre is the middle of its tile,
+    ## not a tile boundary), so the model was told the hill was
+    ## [532,244,702,414] where the tiles it must paint are [544,238,713,407].
+    box = sim.hillPixelBox()
     played = sim.gameTicksElapsed() div TargetFps
     total = (if sim.config.maxTicks > 0: sim.config.maxTicks div TargetFps
              else: 0)

@@ -97,3 +97,35 @@ suite "king of the hill":
     check sim.phase == GameOver
     check sim.endRule == EndRuleFullTime
     check sim.isDraw
+
+  test "the hill box reported to a commander is the tile block itself":
+    ## The seats' view JSON prints this box, and a commander aims at it: it has
+    ## to be the pixels of the tiles that must be painted. Derived from the
+    ## hill CENTRE it was half a tile out on every side.
+    var sim = newPaintballSim()
+    let
+      box = sim.hillPixelBox()
+      size = sim.paintTileSize()
+    var
+      x0 = MapWidth
+      y0 = MapHeight
+      x1 = 0
+      y1 = 0
+    for tile in sim.hillTiles:
+      let centre = sim.paintTileCentre(tile)
+      x0 = min(x0, centre.x - size div 2)
+      y0 = min(y0, centre.y - size div 2)
+      x1 = max(x1, centre.x + size div 2 - 1)
+      y1 = max(y1, centre.y + size div 2 - 1)
+    check box == [x0, y0, x1, y1]
+    ## Every hill tile centre is inside the box, and the box is inside the map.
+    for tile in sim.hillTiles:
+      let centre = sim.paintTileCentre(tile)
+      check centre.x >= box[0] and centre.x <= box[2]
+      check centre.y >= box[1] and centre.y <= box[3]
+    check box[0] >= 0 and box[1] >= 0
+    check box[2] < MapWidth and box[3] < MapHeight
+    ## And it is the 5x5 block the design note names, not a radius off centre.
+    check box[2] - box[0] + 1 == 5 * size
+    check box[3] - box[1] + 1 == 5 * size
+    echo "hill box ", box, " for ", sim.hillTiles.len, " tiles of ", size, " px"

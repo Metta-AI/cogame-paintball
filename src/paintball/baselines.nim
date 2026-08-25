@@ -22,9 +22,32 @@ type
     blHoldline = "holdline"
     blSprayer = "sprayer"
 
-const HuntRadiusHoldline = 200   ## px: switch a governed cog to `hunt`.
-const HuntRadiusSprayer = 120    ## px: the weaker baseline commits later.
-const GuardStandoff = 250        ## px off the hill, on the team's own side.
+type
+  BaselineParams* = object
+    ## The three tunables of the two baselines. They are a parameter rather
+    ## than a literal because they were CHOSEN by a grid sweep, not guessed:
+    ## `tools/tune_baselines.nim` plays the head-to-head episode over a
+    ## bounded matrix of them and prints the table; `tools/ci/baseline_tuning.json`
+    ## records the sweep's pick and `tests/test_tuning.nim` asserts the shipped
+    ## defaults below still equal it.
+    huntRadiusHoldline*: int   ## px: switch a `holdline` cog to `hunt`.
+    huntRadiusSprayer*: int    ## px: the weaker baseline commits later.
+                               ## Kept at the note's 120 px, below holdline's.
+    guardStandoff*: int        ## px off the hill, on the team's own side.
+
+const DefaultBaselineParams* = BaselineParams(
+  ## The grid harness's pick, not a guess: `tools/tune_baselines.nim` plays
+  ## the head-to-head ladder over a 4x4 matrix of these and this cell wins
+  ## 5 of its 6 episodes with a +1762 hill-tick margin, where the design
+  ## note's first guess (200 px hunt, 250 px guard) wins 1 of 6 with -2113.
+  ## At a 250 px standoff the `guard` cog is out of the fight, so `holdline`
+  ## plays three painters against `sprayer`'s four; a wide hunt radius pulls
+  ## its hill cogs off the square to chase. `tools/ci/baseline_tuning.json`
+  ## records the whole grid and ci.yml re-runs the sweep with `--check`.
+  huntRadiusHoldline: 130,
+  huntRadiusSprayer: 120,
+  guardStandoff: 110
+)
 
 proc parseBaseline*(text: string): Baseline =
   ## PLAYER_SCRIPTED values. Anything unrecognised is `holdline`: a seat that
@@ -34,8 +57,10 @@ proc parseBaseline*(text: string): Baseline =
   of "sprayer", "spray": blSprayer
   else: blHoldline
 
-proc guardPoint(sim: SimServer, team: Team): tuple[x, y: int] =
-  ## A point GuardStandoff px off the hill on this team's own side of the
+proc guardPoint(
+  sim: SimServer, team: Team, standoff: int
+): tuple[x, y: int] =
+  ## A point `standoff` px off the hill on this team's own side of the
   ## map — "a flank has to go through somebody".
   let
     hill = hillCentre(sim)
@@ -44,8 +69,8 @@ proc guardPoint(sim: SimServer, team: Team): tuple[x, y: int] =
     dx = anchor.x - hill.x
     dy = anchor.y - hill.y
   let span = max(1, abs(dx) + abs(dy))
-  (clamp(hill.x + dx * GuardStandoff div span, 0, MapWidth - 1),
-   clamp(hill.y + dy * GuardStandoff div span, 0, MapHeight - 1))
+  (clamp(hill.x + dx * standoff div span, 0, MapWidth - 1),
+   clamp(hill.y + dy * standoff div span, 0, MapHeight - 1))
 
 proc farthestNonOwnHillTiles(
   sim: SimServer, team: Team
@@ -92,15 +117,16 @@ proc scriptedDirective*(
   ctl: ControlState,
   sim: SimServer,
   kind: Baseline,
-  governed: seq[int]
+  governed: seq[int],
+  params = DefaultBaselineParams
 ): SquadDirective =
   ## The directive one baseline issues for the cogs it governs this turn.
   ##
   ## `holdline` — of the cogs it governs: the one nearest the hill centre
   ## holds it, the next two paint the two non-own hill tiles furthest from
   ## each other, and the furthest guards a standoff point on the team's own
-  ## side. Any governed cog with a known enemy inside HuntRadiusHoldline
-  ## switches to `hunt`.
+  ## side. Any governed cog with a known enemy inside
+  ## `params.huntRadiusHoldline` switches to `hunt`.
   ##
   ## `sprayer` — deliberately weaker and different in SHAPE, so the ladder
   ## gets a spread rather than two versions of one bot: every governed cog
@@ -151,7 +177,8 @@ proc scriptedDirective*(
         order.targetY = edge.y
         order.say = "paint"
       else:
-        let guard = guardPoint(sim, sim.players[cogIndex].team)
+        let guard = guardPoint(
+          sim, sim.players[cogIndex].team, params.guardStandoff)
         order.intent = intGuard
         order.targetX = guard.x
         order.targetY = guard.y
@@ -161,7 +188,8 @@ proc scriptedDirective*(
         order.say = "watch"
     let enemy = ctl.knownEnemy(sim, cogIndex)
     let radius =
-      if kind == blSprayer: HuntRadiusSprayer else: HuntRadiusHoldline
+      if kind == blSprayer: params.huntRadiusSprayer
+      else: params.huntRadiusHoldline
     if enemy.known and
         distSq(sim.players[cogIndex].x, sim.players[cogIndex].y,
                enemy.x, enemy.y) <= radius * radius:

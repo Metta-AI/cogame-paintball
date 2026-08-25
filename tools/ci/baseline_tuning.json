@@ -1,0 +1,164 @@
+{
+  "harness": "tools/tune_baselines.nim",
+  "ticks": 3000,
+  "seeds": [
+    679961,
+    11,
+    4242
+  ],
+  "episodesPerCell": 6,
+  "note": "each cell is one holdline-vs-sprayer episode per seed from both sides; the pick wins the most episodes, hill-tick margin breaks ties. holdline's hunt radius stays >= sprayer's 120 px.",
+  "chosen": {
+    "huntRadiusHoldline": 130,
+    "huntRadiusSprayer": 120,
+    "guardStandoff": 110,
+    "wins": 5,
+    "margin": 1762
+  },
+  "grid": [
+    {
+      "huntRadiusHoldline": 130,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 110,
+      "wins": 5,
+      "episodes": 6,
+      "margin": 1762,
+      "hillFlips": 86
+    },
+    {
+      "huntRadiusHoldline": 130,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 120,
+      "wins": 5,
+      "episodes": 6,
+      "margin": 891,
+      "hillFlips": 68
+    },
+    {
+      "huntRadiusHoldline": 130,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 130,
+      "wins": 3,
+      "episodes": 6,
+      "margin": 385,
+      "hillFlips": 57
+    },
+    {
+      "huntRadiusHoldline": 130,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 250,
+      "wins": 4,
+      "episodes": 6,
+      "margin": -206,
+      "hillFlips": 44
+    },
+    {
+      "huntRadiusHoldline": 150,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 110,
+      "wins": 4,
+      "episodes": 6,
+      "margin": 1888,
+      "hillFlips": 98
+    },
+    {
+      "huntRadiusHoldline": 150,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 120,
+      "wins": 5,
+      "episodes": 6,
+      "margin": 1188,
+      "hillFlips": 57
+    },
+    {
+      "huntRadiusHoldline": 150,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 130,
+      "wins": 2,
+      "episodes": 6,
+      "margin": -46,
+      "hillFlips": 39
+    },
+    {
+      "huntRadiusHoldline": 150,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 250,
+      "wins": 2,
+      "episodes": 6,
+      "margin": -282,
+      "hillFlips": 24
+    },
+    {
+      "huntRadiusHoldline": 170,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 110,
+      "wins": 5,
+      "episodes": 6,
+      "margin": 801,
+      "hillFlips": 57
+    },
+    {
+      "huntRadiusHoldline": 170,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 120,
+      "wins": 4,
+      "episodes": 6,
+      "margin": 907,
+      "hillFlips": 101
+    },
+    {
+      "huntRadiusHoldline": 170,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 130,
+      "wins": 3,
+      "episodes": 6,
+      "margin": 298,
+      "hillFlips": 41
+    },
+    {
+      "huntRadiusHoldline": 170,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 250,
+      "wins": 2,
+      "episodes": 6,
+      "margin": -519,
+      "hillFlips": 51
+    },
+    {
+      "huntRadiusHoldline": 200,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 110,
+      "wins": 5,
+      "episodes": 6,
+      "margin": 596,
+      "hillFlips": 54
+    },
+    {
+      "huntRadiusHoldline": 200,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 120,
+      "wins": 3,
+      "episodes": 6,
+      "margin": 26,
+      "hillFlips": 89
+    },
+    {
+      "huntRadiusHoldline": 200,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 130,
+      "wins": 4,
+      "episodes": 6,
+      "margin": 473,
+      "hillFlips": 58
+    },
+    {
+      "huntRadiusHoldline": 200,
+      "huntRadiusSprayer": 120,
+      "guardStandoff": 250,
+      "wins": 1,
+      "episodes": 6,
+      "margin": -2113,
+      "hillFlips": 77
+    }
+  ]
+}

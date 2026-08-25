@@ -10,7 +10,7 @@
   "episode_timeout_minutes": 20,
   "game": {
     "name": "paintball",
-    "display_name": "Paintball — King of the Hill",
+    "owner": "daveey@gmail.com",
     "description": "Two four-cog squads fight over one central hill by painting the floor. Own colour underfoot is speed and healing; 80% of the hill's floor tiles owns it. Every episode is played twice — once commanding your whole squad, once as a lone visitor beside scripted teammates — and averaged.",
     "runnable": {
       "type": "game",

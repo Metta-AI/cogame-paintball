@@ -46,13 +46,14 @@ type
       ## PLAYERS" span before this is dead air a spectator should never have to
       ## watch). Playback auto-starts here, loops back here, and the scrubber /
       ## tick clock are offset by it so the shown timeline is 0 = first action.
-    livesSeries*: seq[seq[int]]
-      ## [tick, livesPerTeam…] change-points across the WHOLE match (one lives
-      ## count per team, in Team order), precomputed on the deterministic
-      ## keyframe walk so the momentum graph can draw its full-timeline shape
+    leadSeries*: seq[seq[int]]
+      ## [tick, hillTicksPerTeam…] change-points across the WHOLE EPISODE (one
+      ## CUMULATIVE hill-tick count per team, in Team order), precomputed on
+      ## the deterministic keyframe walk so the momentum graph can draw its
+      ## full-timeline shape
       ## all at once (not accumulate as it plays). Only points where some
-      ## team's lives CHANGE are stored (compact step series); the client holds
-      ## each value to the next point and to maxTick.
+      ## team's hill count CHANGES are stored (compact step series); the client
+      ## holds each value to the next point and to maxTick.
     endHoldFrames*: int
       ## Real-time frames left to HOLD on the final game-over frame before a
       ## looping replay restarts, so the end segment (winner, win condition,
@@ -101,7 +102,7 @@ type
     builder: ReplayPlayer
     beatTracker: BroadcastTracker
     beatTicks: seq[int]
-    lastLives: seq[int]
+    lastLead: seq[int]
     interval: int
     maxTick: int
 
@@ -509,19 +510,27 @@ proc buildLullSpans*(
     if i < beatTicks.len:
       prevBeat = nextBeat
 
-proc scanTeamLives(sim: SimServer): seq[int] =
-  ## One lives count per team, in Team order, so the series reads the same
-  ## for any team count.
+proc scanTeamHillTicks(sim: SimServer): seq[int] =
+  ## One CUMULATIVE hill-tick count per team, in Team order: the archived
+  ## totals of the games already finished plus this game's running count. The
+  ## momentum graph plots the DIFFERENCE of the two teams' values, so this is
+  ## the hill-tick difference over the whole episode — the thing a KotH
+  ## spectator is watching. (The starter graphed lives here; with `lives: 12`
+  ## a paintball series of lives is near-flat and shows tag attrition, not
+  ## hill momentum.)
   for team in sim.teams():
-    result.add(sim.teamLivesRemaining(team))
+    var total = sim.hillTicks[team]
+    for archived in sim.gameHill:
+      total += archived[team]
+    result.add(total)
 
-proc scanSeriesPoint(tick: int, lives: seq[int]): seq[int] =
-  ## One [tick, livesPerTeam…] change-point of the momentum series.
+proc scanSeriesPoint(tick: int, lead: seq[int]): seq[int] =
+  ## One [tick, hillTicksPerTeam…] change-point of the momentum series.
   result = @[tick]
-  result.add(lives)
+  result.add(lead)
 
 proc scanComplete*(replay: ReplayPlayer): bool =
-  ## True once the precompute walk has finished: livesSeries, beatEvents and
+  ## True once the precompute walk has finished: leadSeries, beatEvents and
   ## lullSpans hold the whole match and the lead chrome may ship. Until then
   ## keyframes only cover the walked prefix (seeks past it re-simulate
   ## forward, exactly like seeking between keyframes) and skip-lulls has no
@@ -541,7 +550,7 @@ proc initReplayScan*(
   ## advanceReplayScan — a bounded slice per presentation frame in the
   ## hosted viewer, or all at once via buildReplayKeyframes.
   replay.keyframes = @[]
-  replay.livesSeries = @[]
+  replay.leadSeries = @[]
   replay.lullSpans = @[]
   replay.beatEvents = newJArray()
   replay.achievementBadges = newJArray()
@@ -554,8 +563,8 @@ proc initReplayScan*(
   scan.builder.mismatchQuit = replay.mismatchQuit
   scan.maxTick = scan.builder.replayMaxTick()
   replay.keyframes.add(scan.builder.saveReplayKeyframe(scan.sim))
-  scan.lastLives = scanTeamLives(scan.sim)
-  replay.livesSeries.add(scanSeriesPoint(scan.sim.tickCount, scan.lastLives))
+  scan.lastLead = scanTeamHillTicks(scan.sim)
+  replay.leadSeries.add(scanSeriesPoint(scan.sim.tickCount, scan.lastLead))
   # Beat ticks for the lull map are derived by the SAME tracker the broadcast
   # channel uses, so "nothing happens here" agrees with the story the kill
   # feed and banners tell. Respawns are excluded: they trail kills on a fixed
@@ -601,14 +610,14 @@ proc advanceReplayScan*(replay: var ReplayPlayer, maxTicks: int) =
       break
     if replay.startTick < 0 and scan.sim.phase == Playing:
       replay.startTick = scan.sim.gameStartTick
-    # Record the per-team lives change-points across the full match so the
-    # momentum graph draws its whole-timeline shape up front (deterministic
-    # replay: a tick's lives are fixed). Only points where some team's lives
-    # change are stored to keep the series compact.
-    let lives = scanTeamLives(scan.sim)
-    if lives != scan.lastLives:
-      replay.livesSeries.add(scanSeriesPoint(scan.sim.tickCount, lives))
-      scan.lastLives = lives
+    # Record the per-team hill-tick change-points across the full episode so
+    # the momentum graph draws its whole-timeline shape up front
+    # (deterministic replay: a tick's hill counts are fixed). Only points
+    # where some team's count changes are stored to keep the series compact.
+    let lead = scanTeamHillTicks(scan.sim)
+    if lead != scan.lastLead:
+      replay.leadSeries.add(scanSeriesPoint(scan.sim.tickCount, lead))
+      scan.lastLead = lead
     var stepBeats = newJArray()
     scan.sim.stepEvents(scan.beatTracker, stepBeats)
     for event in stepBeats:
@@ -628,10 +637,10 @@ proc advanceReplayScan*(replay: var ReplayPlayer, maxTicks: int) =
   if scan.builder.playing and scan.sim.tickCount < scan.maxTick:
     return                              # more slices to come.
   # Anchor the final tick so the client can hold the last value to the end.
-  if replay.livesSeries.len == 0 or
-      replay.livesSeries[^1][0] != scan.sim.tickCount:
-    replay.livesSeries.add(
-      scanSeriesPoint(scan.sim.tickCount, scan.lastLives))
+  if replay.leadSeries.len == 0 or
+      replay.leadSeries[^1][0] != scan.sim.tickCount:
+    replay.leadSeries.add(
+      scanSeriesPoint(scan.sim.tickCount, scan.lastLead))
   replay.lullSpans = buildLullSpans(
     scan.beatTicks,
     replay.replayStartTick(),

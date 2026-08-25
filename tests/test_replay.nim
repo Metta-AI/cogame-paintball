@@ -245,3 +245,45 @@ suite "replay":
     check sim.gameIndex == Games          ## both halves accounted for
     check sim.gameHill.len == Games
     check sim.gameRegimes == @[regimeResident, regimeVisitor]
+
+  test "the momentum series is the HILL-TICK difference, not lives":
+    ## The starter graphed lives here. With `lives: 12` per cog that series is
+    ## near-flat over a paintball episode and shows tag attrition, so the
+    ## momentum graph said nothing about the only thing being contested. The
+    ## series now carries each team's CUMULATIVE hill ticks, and the chrome's
+    ## two-team renderer plots their difference.
+    let data = parseReplayBytes(readFile(path))
+    var runtime = initReplayRuntime(data, mismatchQuit = true,
+      gameEventLoggingEnabled = false)
+    var player = runtime.player
+    ## Drive the precompute walk to completion, as the hosted viewer does a
+    ## bounded slice at a time.
+    while not player.scanComplete:
+      player.advanceReplayScan(4000)
+    check player.leadSeries.len >= 2
+    for point in player.leadSeries:
+      check point.len == 3               ## [tick, red, blue]
+      ## Cumulative: a hill count never goes down inside an episode.
+      check point[1] >= 0
+      check point[2] >= 0
+    for i in 1 ..< player.leadSeries.len:
+      check player.leadSeries[i][1] >= player.leadSeries[i - 1][1]
+      check player.leadSeries[i][2] >= player.leadSeries[i - 1][2]
+    ## And the final point is the episode's real hill totals, summed over both
+    ## games exactly as the results document sums them.
+    var sim = runtime.sim
+    while player.playing and sim.tickCount < player.replayMaxTick():
+      player.stepReplay(sim)
+    var total: array[Team, int]
+    for archived in sim.gameHill:
+      for team in sim.teams():
+        total[team] += archived[team]
+    echo "lead series: ", player.leadSeries.len, " points, final ",
+      player.leadSeries[^1], " vs archived hill ticks red=", total[Red],
+      " blue=", total[Blue]
+    check player.leadSeries[^1][1] == total[Red]
+    check player.leadSeries[^1][2] == total[Blue]
+    ## A lives series could not satisfy that equality: 8 cogs x 12 lives is
+    ## never the archived hill count. (This fixture is 2 x 240 ticks, far too
+    ## short for anyone to reach 80% of the hill, so the totals here are 0 —
+    ## which is exactly what makes the equality discriminating.)

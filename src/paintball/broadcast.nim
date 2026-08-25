@@ -771,7 +771,7 @@ proc buildStateJson*(
   transportEnabled: bool,
   mismatchTick: int,
   povSlot: int,
-  livesSeries: seq[seq[int]] = @[],
+  leadSeries: seq[seq[int]] = @[],
   startTick: int = 0,
   endHoldSeconds: int = 0,
   includeFpMap: bool = false,
@@ -866,18 +866,19 @@ proc buildStateJson*(
       if fp.kind != JNull:
         state["fp"] = fp
 
-  # Full-timeline lives series (sent ONCE per HUD viewer): change-points across
-  # the WHOLE match so the momentum graph draws its full width immediately
+  # Full-timeline lead series (sent ONCE per HUD viewer): change-points across
+  # the WHOLE episode so the momentum graph draws its full width immediately
   # instead of accumulating to the playhead. Team-keyed so any number of teams
-  # graphs: {"teams": [name, …], "pts": [[tick, lives, …], …]} — each point is
-  # the tick followed by one lives count per team, in `teams` order. Absent on
-  # every later frame — the client caches it.
-  if livesSeries.len > 0:
+  # graphs: {"teams": [name, …], "pts": [[tick, hillTicks, …], …]} — each point
+  # is the tick followed by one CUMULATIVE hill-tick count per team, in `teams`
+  # order, and the two-team renderer plots their difference: the hill-tick
+  # momentum of the episode. Absent on every later frame — the client caches it.
+  if leadSeries.len > 0:
     var teamNames = newJArray()
     for team in sim.teams():
       teamNames.add(%teamText(team))
     var pts = newJArray()
-    for point in livesSeries:
+    for point in leadSeries:
       var row = newJArray()
       for value in point:
         row.add(%value)

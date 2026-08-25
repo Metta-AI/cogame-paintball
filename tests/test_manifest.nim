@@ -8,6 +8,7 @@ import helpers
 const
   ManifestPath = "coworld_manifest_template.json"
   ComposePath = "compose.yaml"
+  ProtocolPath = "docs/PROTOCOL.md"
   Image = "coworld-paintball"
   Placeholder = "{{PAINTBALL_IMAGE}}"
   Seats = 2
@@ -124,6 +125,31 @@ suite "coworld manifest":
 
   test "the replay viewer is the STATIC bundle, never a pod":
     check game["replay_viewer"]["bundle"].getStr() == "static-replay-viewer"
+
+  test "nothing shipped declares or serves a /client/replay pod path":
+    ## Checklist item 3: "the viewer contacts nothing but S3. No
+    ## /client/replay pod path anywhere." The starter served the broadcast page
+    ## at bitworld's replay routes and the protocol doc declared them as part
+    ## of the contract; both are gone, so the manifest a certifier reads and
+    ## the server it probes agree with the static bundle it declares.
+    check "/client/replay" notin readFile(ProtocolPath)
+    check "/client/replay" notin $manifest["game"]["protocols"]
+    check "/client/replay" notin $manifest["game"]["docs"]
+    ## And the server registers no replay page: the two bitworld replay-page
+    ## routes, the league shell route and the embedded page they served are all
+    ## gone. Comment lines are stripped first — the file explains the removal
+    ## and that explanation must not read as evidence of the route.
+    var server = ""
+    for line in readFile("src/paintball/server.nim").splitLines():
+      if line.strip().startsWith("#"):
+        continue
+      server.add(line & "\n")
+    check "ReplayClientRoute" notin server
+    check "CoworldReplayClientRoute" notin server
+    check "EmbeddedBroadcastReplayHtml" notin server
+    check "EmbeddedLeagueReplayerHtml" notin server
+    check "/client/league" notin server
+    check "/client/replay" notin server
 
   test "every variant settles inside 60% of episodeTimeoutSeconds":
     for variant in manifest["variants"]:

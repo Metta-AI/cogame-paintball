@@ -12,8 +12,14 @@ can and cannot see.
 | `GET /player?slot=N&token=T` | the seat websocket (403 on a bad slot or token) |
 | `GET /global` | the spectator/board websocket |
 | `GET /reward` | the reward stream |
-| `GET /client/global`, `GET /client/player`, `GET /client/replay` | real HTML pages, registered before any catch-all asset route |
+| `GET /client/global`, `GET /client/player` | real HTML pages, registered before any catch-all asset route |
 | `GET /replay-data` | the recorded replay bytes |
+
+There is deliberately **no replay page on the pod**. Paintball's replay viewer
+is the static wasm bundle the manifest declares
+(`"replay_viewer": {"bundle": "static-replay-viewer"}`), served from object
+storage and contacting nothing but the `?replay=` URL it is given; the
+starter's pod-served replay routes are removed rather than left listening.
 
 `/healthz` and `/global` keep answering for a bounded ~20 s grace after the
 episode's artifacts are written, then the process exits.

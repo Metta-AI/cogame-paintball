@@ -4,7 +4,7 @@ import
   bitworld/client as bitworldClient, bitworld/profile, bitworld/spriteprotocol,
   bitworld/runtime,
   curly, mummy,
-  sim, global, replays, broadcast, replay_runtime, events, wire_constants,
+  sim, global, replays, broadcast, replay_runtime, events,
   control, directives, baselines, decide
 
 when defined(posix):
@@ -64,28 +64,17 @@ const
   ControlKickPath = "/control/kick"
   ## Cap on player debug-sprite bytes accepted per player per tick.
   MaxDebugSpriteBytesPerTick* = 32 * 1024
-  # The designed broadcast replay client, embedded at compile time. Served for
-  # the replay routes in place of bitworld's generic global client; a single
-  # self-contained file (shared chrome + core JS inlined). Live/player/global
-  # paths are untouched and keep serving the bitworld client (§14 live column).
-  # Final in-page script order: wire constants, shared chrome, core, page IIFE
-  # (marker positions in the HTML fix that; the replace order here is free).
-  EmbeddedBroadcastReplayHtml = staticRead("../../client/replay_broadcast.html").replace(
-    "<!-- CHROME_COMMON -->",
-    "<script>" & staticRead("../../client/chrome_common.js") & "</script>"
-  ).replace(
-    "<!-- BROADCAST_CORE -->",
-    "<script>" & staticRead("../../client/broadcast_core.js") & "</script>"
-  ).spliceWireConstants()
-  # The League Replayer shell: a walled stone-pit viewer that EMBEDS the broadcast
-  # client (via ?embed=1) as the lit pit floor and mounts the scorebug, KDA tables,
-  # division standings and transport as flat panels over the dungeon walls. Served
-  # at the bare replay route; embed=1 falls through to the plain broadcast client.
-  # Shares the same chrome_common.js splice as the broadcast client.
-  EmbeddedLeagueReplayerHtml = staticRead("../../client/league_replayer.html").replace(
-    "<!-- CHROME_COMMON -->",
-    "<script>" & staticRead("../../client/chrome_common.js") & "</script>"
-  ).spliceWireConstants()
+  # NO REPLAY PAGE IS SERVED FROM THE POD. Paintball's replay viewer is the
+  # STATIC wasm bundle (coworld_manifest_template.json
+  # "replay_viewer": {"bundle": "static-replay-viewer"}), which is served from
+  # object storage and contacts nothing but the ?replay= URL. The starter
+  # served client/replay_broadcast.html at bitworld's /client/replay,
+  # /clients/replay and its own /client/league; those routes are gone, because
+  # a pod-served replay viewer is exactly what the acceptance checklist
+  # forbids and what coworld-release.yml refuses to certify. The page itself is
+  # still the real chrome — it is the source of the bundle's index.html
+  # (Dockerfile.replay-viewer) and tests/test_viewer.nim asserts its
+  # provenance.
   # Dungeon-wall textures (nanobanana generations) served as static assets so the
   # shell HTML stays small and editable. Wide for top/bottom, tall for side walls.
   # Opaque stone, no alpha → JPEG (q82) keeps each well under any committed sprite.
@@ -174,7 +163,6 @@ const
     ("/client/soldier_yellow_front_gun.png",
       staticRead("../../data/soldier_yellow_front_gun.png")),
   ]
-  LeagueReplayerPath = "/client/league"
   WallTextureHorizontalPath = "/client/art/walls/wall_h.jpg"
   WallTextureVerticalPath = "/client/art/walls/wall_v.jpg"
   BroadcastFontPath = "/client/font.ttf"
@@ -613,21 +601,10 @@ proc replayUriKnown(uri: string): bool =
         uri == appState.loadingReplayUri or
         uri == appState.currentReplayUri
 
-proc queueReplayUri(uri: string) =
-  ## Queues a replay switch once, even when HTML and websocket requests repeat it.
-  if uri.len == 0:
-    return
-  {.gcsafe.}:
-    withLock appState.lock:
-      if uri != appState.pendingReplayUri and
-          uri != appState.loadingReplayUri and
-          uri != appState.currentReplayUri:
-        appState.pendingReplayUri = uri
-
 proc recordStartupReplayUri(loaded: bool) =
   ## Records the COGAME_LOAD_REPLAY_URI the process booted with as the active
   ## replay URI. readRuntimeConfig downloads that artifact and drops the URI,
-  ## so without this a /client/replay or websocket request naming the same
+  ## so without this a replay websocket request naming the same
   ## URI would queue a full reload (fetch + map regen + keyframes) of the
   ## replay that is already serving. Skipped when the startup load failed so
   ## a later request can retry it.
@@ -641,10 +618,10 @@ proc recordStartupReplayUri(loaded: bool) =
       appState.currentReplayUri = uri
 
 proc replayRequestUriOrPending(request: Request): tuple[uri: string, loaded: bool] =
-  ## Returns the websocket URI, falling back to the URI captured when serving
-  ## /client/replay. Kubernetes service-proxy websocket upgrades do not
-  ## preserve query params, so the preceding client HTML request is the durable
-  ## place to capture the artifact URI.
+  ## Returns the websocket URI, falling back to the URI the process booted
+  ## with (COGAME_LOAD_REPLAY_URI) or one already queued. Kubernetes
+  ## service-proxy websocket upgrades do not preserve query params, so the
+  ## boot URI is the durable place to take it from.
   result.uri = request.replayRequestUri()
   {.gcsafe.}:
     withLock appState.lock:
@@ -820,36 +797,6 @@ proc httpHandler(request: Request) =
     fontHeaders["Content-Type"] = "font/ttf"
     fontHeaders["Cache-Control"] = "public, max-age=3600"
     request.respond(200, fontHeaders, BroadcastFont)
-  elif request.path in [
-      bitworldClient.ReplayClientRoute,
-      bitworldClient.CoworldReplayClientRoute,
-      LeagueReplayerPath
-    ] and request.httpMethod == "GET":
-    if replayServerModeEnabled():
-      let replayRequest = request.replayRequestUriOrPending()
-      if replayRequest.uri.len == 0 and not replayRequest.loaded:
-        request.respondReplayRequestError(400, "missing replay uri\n")
-        return
-      if replayRequest.uri.len > 0 and
-          not replayRequest.uri.replayUriKnown() and
-          not replayRequest.uri.readableReplayUri():
-        request.respondReplayRequestError(404, "replay uri is not readable\n")
-        return
-      if replayRequest.uri.len > 0:
-        replayRequest.uri.queueReplayUri()
-    # The regular replay routes serve the plain designed broadcast client (the
-    # board) exactly as before. /client/league is an ADD-ON that serves the
-    # walled-pit League Replayer SHELL, which itself embeds the board in an
-    # iframe at /client/replay?embed=1 — the board client reads ?embed=1 to hide
-    # its own chrome so the shell owns the walls/scorebug/rosters. One websocket,
-    # perfect tick sync. (ELEVATE-BY-REBUILD: our HTML, not bitworld's.)
-    var replayHeaders: HttpHeaders
-    replayHeaders["Content-Type"] = "text/html; charset=utf-8"
-    replayHeaders["Cache-Control"] = "no-cache"
-    if request.path == LeagueReplayerPath:
-      request.respond(200, replayHeaders, EmbeddedLeagueReplayerHtml)
-    else:
-      request.respond(200, replayHeaders, EmbeddedBroadcastReplayHtml)
   elif bitworldClient.serveClientRoute(
     request,
     bitworldClient.GlobalClientRoute

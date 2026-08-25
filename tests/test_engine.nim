@@ -201,7 +201,7 @@ suite "decision engine":
     putEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "http://127.0.0.1:9100")
     putEnv("AWS_BEARER_TOKEN_BEDROCK", "test-token")
     delEnv("BEDROCK_MODEL")
-    var config = defaultGameConfig()
+    let config = defaultGameConfig()
     let bedrock = newLlmClient(config)
     check bedrock.transport == ltBedrock
     let request = bedrock.requestFor(SystemPrompt, "view")

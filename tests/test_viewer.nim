@@ -162,7 +162,7 @@ suite "broadcast chrome":
     let handler = page.find("$('scrub').addEventListener('click'")
     check handler >= 0
     check "if (!lastState || !lastState.en) return;" notin
-      page[handler .. handler + 600]
+      page[handler ..< min(page.len, handler + 600)]
     ## And the Worker applies an input on the spot instead of waiting for the
     ## main thread's next batched advance (which is where a click's seek used
     ## to sit for a second or more while the precompute walk ran).

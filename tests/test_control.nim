@@ -122,28 +122,30 @@ suite "control layer and scripted baselines":
     ## change with it. Two evenly-matched scripted squads contesting the same
     ## twenty-one tiles is a BALANCE question and is logged below, not
     ## asserted here — a 100-second sample is not a ladder.
-    var sim = newPaintballSim(paintballConfigJson(maxTicks = 4000))
+    var sim = newPaintballSim(paintballConfigJson(maxTicks = 7000))
     var ctl = initControlState(sim)
     var prev = newSeq[InputState](sim.players.len)
     var directives = newSeq[SquadDirective](2)
     var flips = 0
     var owners: seq[int]
     var lastOwner = -1
-    for tick in 0 ..< 2400:
+    var peakRed, peakBlue = 0
+    for tick in 0 ..< 4800:
       if sim.phase != Playing:
         break
       ctl.observeEnemies(sim)
       if sim.gameTicksElapsed() mod sim.config.turnTicks == 0:
         ## The initiative changes sides halfway: first RED works and BLUE
         ## stands down, then the reverse.
-        let redActive = tick < 1200
+        let redActive = tick < 2400
         for seat in 0 .. 1:
           let commanded = sim.commandedCogs(seat)
           if (seat == 0) == redActive:
             ## All four cogs on paint_hill — a directive an LLM can issue, and
             ## the one that answers "can 80% of the hill be reached at all".
-            ## goalFor sends each cog to the nearest tile that is not yet ours,
-            ## so they spread across the square without being told to.
+                    ## goalFor sends each cog to the FURTHEST tile that is not yet
+            ## ours, so the four of them roll across the square rather than
+            ## parking on its near rim.
             directives[seat] = SquadDirective(source: dsScripted, note: "sweep")
             let hill = hillCentre(sim)
             for cogIndex in commanded:
@@ -173,11 +175,15 @@ suite "control layer and scripted baselines":
         inc flips
         owners.add(owner)
         lastOwner = owner
+      peakRed = max(peakRed, sim.hillCoveragePct(Red))
+      peakBlue = max(peakBlue, sim.hillCoveragePct(Blue))
     var unowned: seq[int]
     for tile in sim.hillTiles:
       if sim.paintFloor[tile] and sim.paintOwner[tile] != 1'u8:
         unowned.add(tile)
     echo "hill tiles RED never took: ", unowned
+    echo "peak hill coverage: red=", peakRed, "% blue=", peakBlue,
+      "% (need ", sim.config.hillOwnPermille div 10, "%)"
     echo "hill owners over the run: ", owners,
       " | hill paint red=", sim.hillPaint[Red], " blue=", sim.hillPaint[Blue],
       " of ", sim.hillFloorTiles,
@@ -191,9 +197,9 @@ suite "control layer and scripted baselines":
     ## The symmetric run: what matters mechanically is that BOTH squads get
     ## paint onto the hill, so the 80% threshold is being fought over rather
     ## than ignored. The banked clocks are printed for the balance record.
-    var sim = newPaintballSim(paintballConfigJson(maxTicks = 1600))
+    var sim = newPaintballSim(paintballConfigJson(maxTicks = 3000))
     var ctl = initControlState(sim)
-    sim.scriptedEpisode(ctl, [blHoldline, blSprayer], 1600)
+    sim.scriptedEpisode(ctl, [blHoldline, blSprayer], 3000)
     echo "symmetric run: hill paint red=", sim.hillPaint[Red],
       " blue=", sim.hillPaint[Blue], " of ", sim.hillFloorTiles,
       " | hill ticks red=", sim.hillTicks[Red],

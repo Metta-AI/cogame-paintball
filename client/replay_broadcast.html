@@ -1723,8 +1723,6 @@ body[data-embed] #board { top: 0; height: 100%; }
   try { EMBED = new URLSearchParams(location.search).get('embed') === '1'; } catch (e) {}
   if (EMBED) document.body.setAttribute('data-embed', '1');
 
-  } catch (e) {}
-
   // Tick deep-link (?t=<tick>): seek there on load, paused, via the same s:
   // command the scrubber uses (the sim clamps out-of-range ticks). One-shot,
   // fired on the first ingested frame so the replay runtime is ready.

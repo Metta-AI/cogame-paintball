@@ -271,6 +271,32 @@ proc nearestHillTile*(
       best = d
       result = (true, cx, cy)
 
+proc farthestHillTile*(
+  sim: SimServer, x, y: int, team: Team
+): tuple[found: bool, x, y: int] =
+  ## The hill floor tile FURTHEST from (x, y) that is not this team's colour.
+  ##
+  ## This is what `paint_hill` walks toward, and the reason is mechanical: the
+  ## cone starts AT the cog and reaches forward, so a cog can never paint the
+  ## tile it is standing on. Sending it to the NEAREST unpainted tile therefore
+  ## parks it on that tile forever — measured, four cogs converged on the
+  ## western rim and the squad plateaued at 13 of 21 tiles. Sending it to the
+  ## far side instead makes it a paint roller: it crosses the hill, its cone
+  ## covers the ground ahead of it, and when it arrives the far side is
+  ## whatever it has not covered yet, so it sweeps back.
+  result = (false, 0, 0)
+  var best = -1
+  for tile in sim.hillTiles:
+    if not sim.paintFloor[tile]:
+      continue
+    if sim.paintOwner[tile] == paintTeamCode(team):
+      continue
+    let (cx, cy) = sim.paintTileCentre(tile)
+    let d = distSq(x, y, cx, cy)
+    if d > best:
+      best = d
+      result = (true, cx, cy)
+
 proc goalFor*(
   ctl: ControlState, sim: SimServer, order: CogOrder, cogIndex: int
 ): tuple[x, y: int] =
@@ -283,7 +309,7 @@ proc goalFor*(
     hill = hillCentre(sim)
   case order.intent
   of intPaintHill:
-    let tile = nearestHillTile(sim, px, py, 0, player.team)
+    let tile = farthestHillTile(sim, px, py, player.team)
     if tile.found: (tile.x, tile.y) else: (hill.x, hill.y)
   of intHoldHill:
     let tile = nearestHillTile(sim, px, py, 1, player.team)
@@ -390,7 +416,7 @@ proc compileMask*(
     ## is NOT ours — which is also what makes `hold_hill` keep the rim painted
     ## instead of guarding one tile and firing at nothing.
     var aimed = false
-    if order.intent in {intHoldHill, intPaintHill}:
+    if order.intent == intHoldHill:
       let tile = nearestHillTile(sim, px, py, 0, player.team)
       if tile.found and distSq(px, py, tile.x, tile.y) > AimMinRangeSq:
         aimX = tile.x

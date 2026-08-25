@@ -59,6 +59,10 @@
   <canvas id="shout"></canvas>
   <canvas id="quiet"></canvas>
 </div>
+<!-- viewer_smoke.mjs reads #clock into the JSON line it prints on stdout, so
+     the fixture's own measurements land in the ci.yml step log rather than
+     only in the uploaded evidence. -->
+<div id="clock"></div>
 <div id="log"></div>
 <script src="./wire_constants.js"></script>
 <script src="./broadcast_core.js"></script>
@@ -74,8 +78,13 @@
     console.log(text);
   }
 
+  function readout(text) {
+    document.getElementById('clock').textContent = text;
+  }
+
   function fail(message) {
     log('FAIL ' + message);
+    readout('FAIL ' + message);
     document.documentElement.setAttribute('data-replay-error', message);
   }
 
@@ -174,6 +183,8 @@
     return count;
   }
 
+  var summary = [];
+
   async function main() {
     var meta = await (await fetch('./text_fixture.json', { cache: 'no-store' })).json();
 
@@ -261,9 +272,13 @@
         throw new Error('at ' + width + 'x' + height + ' ' + stray + ' of ' +
           total + ' changed pixels fell OUTSIDE every expected bubble rect');
       }
-      log('  ' + width + 'x' + height + ': scale ' + transform.scale.toFixed(3) +
-        ', every bubble in frame, weakest bubble changed ' + worst +
-        ' pixels, ' + stray + '/' + total + ' changed pixels stray');
+      var line = width + 'x' + height + ': scale ' + transform.scale.toFixed(3) +
+        ', ' + meta.bubbles.length + '/' + meta.bubbles.length +
+        ' bubbles in frame, weakest changed ' + worst + ' px, ' + stray + '/' +
+        total + ' changed px stray';
+      log('  ' + line);
+      summary.push(line);
+      readout(summary.join(' | '));
     }
     pass();
   }

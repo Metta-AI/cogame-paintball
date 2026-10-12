@@ -193,7 +193,7 @@ suite "coworld manifest":
     check "  paintball:" in compose
     check "image: " & Image & ":latest" in compose
     check "platform: linux/amd64" in compose
-    check "network: host" in compose
+    check "network: host" notin compose
     check game["runnable"]["image"].getStr() == Placeholder
     for player in manifest["player"]:
       check player["image"].getStr() == Placeholder
@@ -204,8 +204,7 @@ suite "coworld manifest":
     let name = game["name"].getStr()
     check name == "paintball"
     check "_" notin name
-    check game["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr() ==
-      "secret://coworld/" & name & "/anthropic_api_key"
+    check not game["runnable"].hasKey("env")
     check game["runnable"]["type"].getStr() == "game"
     check game["runnable"]["run"][0].getStr() == "/bin/paintball"
 
